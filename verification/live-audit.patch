@@ -1,0 +1,9 @@
+diff --git a/sum.mjs b/sum.mjs
+index db130c7..506a413 100644
+--- a/sum.mjs
++++ b/sum.mjs
+@@ -1,3 +1,3 @@
+ export function sum(a, b) {
+-  return a - b;
++  return a + b;
+ }

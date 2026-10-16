@@ -1,0 +1,7 @@
+node_modules/
+*.tgz
+dist/
+.codex-workflow/
+.env
+.env.*
+!.env.example

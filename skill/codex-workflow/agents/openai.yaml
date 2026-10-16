@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Workflow"
+  short_description: "Run scripted Codex jobs with model routing"
+  default_prompt: "Use $codex-workflow to run a verified repository workflow."

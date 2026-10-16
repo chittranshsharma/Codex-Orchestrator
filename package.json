@@ -1,0 +1,30 @@
+{
+  "name": "codex-workflow",
+  "version": "0.2.0",
+  "description": "Scripted Codex workflows with model routing, checkpoints, isolated edits, and a live terminal dashboard",
+  "repository": { "type": "git", "url": "git+https://github.com/chittranshsharma/Codex-Orchestrator.git" },
+  "homepage": "https://github.com/chittranshsharma/Codex-Orchestrator#readme",
+  "bin": { "codex-workflow": "bin/codex-workflow.mjs", "cwf": "bin/codex-workflow.mjs" },
+  "main": "dist/runtime.js",
+  "types": "dist/runtime.d.ts",
+  "exports": { ".": "./dist/runtime.js" },
+  "files": ["bin", "dist", "docs", "workflows", "skill", "verification", "README.md", "VERIFICATION.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@openai/codex-sdk": "0.163.0",
+    "ajv": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  }
+}
