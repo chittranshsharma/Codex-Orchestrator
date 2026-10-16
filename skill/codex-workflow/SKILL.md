@@ -9,6 +9,8 @@ Use the installed `codex-workflow` command (`cwf` is an alias). Run `codex-workf
 
 Run commands from the intended Git repository, or specify `--repo` with its absolute path. Use `--plain` in Codex's command tools, or `--json` when parsing events. The interactive dashboard runs in a real terminal; it is not a native Codex panel.
 
+New runs default to Manual. Preserve the user's choice of models for every job: use `--manual --agents-file <reviewed-map.json>` for noninteractive execution, or let the user run `--manual` in their terminal picker. The JSON file maps exact job IDs to `{model,effort}`. Missing assignments block that job visibly. Use `--auto` only when the user explicitly chooses automatic assignment; `--jev` alone does not grant that choice. Manual disables Jev requests and uses explicit fallbacks for workflow decisions. Saved manual selections survive resume; changed downstream prompts prompt again.
+
 For an audit, use `codex-workflow run audit --target <relative-path> --plain`. Add `--question` for the user's focus. Add `--fix` when the user requested fixes; this prepares patches in dedicated worktrees. It does not apply them to the main checkout. Edit runs require a clean working tree; preserve existing user work instead of resetting or stashing it automatically.
 
 For a custom repeatable task, use `codex-workflow plan "<task>" --out <workflow.mjs> --plain`, inspect the generated source, and then run the reviewed script with `codex-workflow run <workflow.mjs> --plain`. Scripts are trusted local Node.js code. The worker sandboxes do not sandbox the coordinator script.

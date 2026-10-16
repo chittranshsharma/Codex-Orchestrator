@@ -4,6 +4,7 @@ import { Ajv } from 'ajv';
 import type { Config, JsonSchema } from './types.js';
 
 export const defaultConfig: Config = {
+  selectionMode: 'manual', assignments: {},
   roles: {
     plan: { model: 'gpt-6.1-sol', effort: 'high' },
     scan: { model: 'gpt-6-luna', effort: 'high' },
@@ -28,6 +29,8 @@ const configSchema = {
   type: 'object', additionalProperties: false,
   required: ['roles', 'concurrency', 'maxAgents', 'timeoutMs', 'readRetries', 'maxInputChars', 'maxOutputChars'],
   properties: {
+    selectionMode: { enum: ['manual', 'auto'] },
+    assignments: { type: 'object', maxProperties: 1000, propertyNames: { pattern: '^[a-zA-Z0-9_-]{1,100}$', not: { enum: ['__proto__', 'prototype', 'constructor'] } }, additionalProperties: profileSchema },
     roles: { type: 'object', additionalProperties: false, required: Object.keys(defaultConfig.roles),
       properties: Object.fromEntries(Object.keys(defaultConfig.roles).map(role => [role, profileSchema])) },
     concurrency: { type: 'integer', minimum: 1, maximum: 32 },

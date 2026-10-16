@@ -6,7 +6,7 @@
 
 Script the mission. Route the models. Run the agents. Verify the patch.
 
-[![Version](https://img.shields.io/badge/version-0.2.0-a78bfa)](package.json)
+[![Version](https://img.shields.io/badge/version-0.3.0-a78bfa)](package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522-84cc16)](https://nodejs.org/)
 [![MIT](https://img.shields.io/badge/license-MIT-60a5fa)](LICENSE)
 [![Codex SDK](https://img.shields.io/badge/built_with-Codex_SDK-f5a97f)](https://learn.chatgpt.com/docs/codex-sdk)
@@ -85,6 +85,33 @@ cwf run audit --target src --fix
 
 The dashboard opens in an interactive terminal. Use `--plain` inside command tools or `--json` for event consumers. `doctor` makes no model calls; `doctor --live` makes short, metered probes of configured Codex models.
 
+### You choose who runs each job
+
+New runs default to **Manual**. In an interactive terminal, a run without a mode flag first asks you to choose Manual or Auto. Manual opens a picker before each job starts: choose a model, change reasoning effort, inspect the full prompt, or enter a custom model ID. Downstream jobs are offered when earlier findings make them known. Other already approved jobs can run in parallel.
+
+```sh
+cwf run audit --target src --manual
+cwf run audit --target src --auto
+cwf run audit --target src --auto --jev
+cwf demo --manual
+```
+
+![Manual model and reasoning selection before a job starts](docs/images/terminal-manual-selection.png)
+
+Use Up/Down to choose, **E** to cycle effort, **M** for a custom model, **Tab** to inspect the prompt, and **Enter** to confirm. Custom model entry takes Enter to finish typing, then another Enter to confirm. Ctrl+C cancels. Manual mode makes no Jev calls and uses explicit fallbacks for semantic workflow decisions. Saved job selections are reused on resume; a changed downstream prompt requires a new selection.
+
+For scripts, plain output, or Codex command tools, pass an exact job map with `--manual --agents-file agents.json`:
+
+```json
+{
+  "scan-0": { "model": "gpt-6-luna", "effort": "high" },
+  "finding-0": { "model": "gpt-6.1-sol", "effort": "high" },
+  "review": { "model": "gpt-6.1-sol", "effort": "high" }
+}
+```
+
+This is an example, not an exhaustive map for every audit. Job IDs depend on findings and fix rounds. A missing assignment stops that job with a visible error; no model is silently selected. Use `--auto` only when you want automatic assignment. Older saved runs retain their original routing behavior.
+
 ### Review, then apply
 
 The runner prints a run ID and report path. Inspect the report and captured patch, then apply an accepted edit:
@@ -112,19 +139,19 @@ These are configurable starting profiles and require account access. Without Jev
 ```powershell
 # PowerShell: set the key locally, then enable routing.
 $env:TYPESAFE_API_KEY = '<your TypeSafe key>'
-cwf run audit --target src --jev
+cwf run audit --target src --auto --jev
 ```
 
 ```sh
 # macOS / Linux shell
 export TYPESAFE_API_KEY='<your TypeSafe key>'
-cwf run audit --target src --jev
+cwf run audit --target src --auto --jev
 ```
 
 For semantic target selection as well as model routing:
 
 ```sh
-cwf run jev-review --target src/auth --target src/api --question "Find session expiry bugs" --jev
+cwf run jev-review --target src/auth --target src/api --question "Find session expiry bugs" --auto --jev
 ```
 
 Set `jev.enabled` in `.codex-workflow.json` for the repository default. Customize `jev.profiles`, `jev.confidence`, and `jev.timeoutMs` there. `--no-jev` disables it for a new run. Role model overrides are fallbacks; dynamic tier models come from `jev.profiles`.

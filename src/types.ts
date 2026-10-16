@@ -12,6 +12,8 @@ export interface Judgment {
   model: string; fallback: boolean; error?: string; usage: { input_tokens: number; output_tokens: number };
 }
 export interface Config {
+  selectionMode?: 'manual' | 'auto';
+  assignments?: Record<string, ModelProfile>;
   roles: Record<Role, ModelProfile>;
   concurrency: number; maxAgents: number; timeoutMs: number; readRetries: number;
   maxInputChars: number; maxOutputChars: number; codexPath?: string;
@@ -35,6 +37,7 @@ export interface TaskRecord {
   verifiedBy?: string; supersededBy?: string;
   order?: number;
   routing?: Judgment;
+  assignment?: ModelProfile;
 }
 export interface RunState {
   version: 1; id: string; name: string; description: string; repo: string;

@@ -7,6 +7,7 @@ export type Judge = (state: unknown, options: DecisionOptions, signal: AbortSign
 
 export function createJudge(config: JevConfig, fetcher: typeof fetch = fetch, apiKey = process.env.TYPESAFE_API_KEY): Judge {
   return async (state, options, signal) => {
+    signal.throwIfAborted();
     const fallback = (error: string): Judgment => ({ choice: options.fallback, confidence: 0, probabilities: {},
       model: config.model, fallback: true, error, usage: { input_tokens: 0, output_tokens: 0 } });
     if (!config.enabled) return fallback('Jev disabled');
@@ -21,8 +22,19 @@ export function createJudge(config: JevConfig, fetcher: typeof fetch = fetch, ap
       });
       // Do not persist service error bodies, which could echo input or credentials.
       if (!response.ok) return fallback(`TypeSafe HTTP ${response.status}`);
-      const text = await response.text();
-      if (text.length > 100_000) return fallback('TypeSafe response exceeds limit');
+      if (!response.body) return fallback('Empty TypeSafe response');
+      const reader = response.body.getReader();
+      let size = 0; const chunks: Uint8Array[] = [];
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 100_000) { await reader.cancel(); return fallback('TypeSafe response exceeds limit'); }
+          chunks.push(value);
+        }
+      } finally { reader.releaseLock(); }
+      const text = Buffer.concat(chunks).toString('utf8');
       const body = JSON.parse(text);
       const answer = body?.answers?.decision;
       const keys = Object.keys(options.choices);

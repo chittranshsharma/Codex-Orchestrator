@@ -6,6 +6,8 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { emitKeypressEvents } from 'node:readline';
+import { createInterface } from 'node:readline/promises';
+import { AgentPicker } from './selection.js';
 import { defaultConfig, loadConfig } from './config.js';
 import { Runtime, createRun, resumeRun, writeReport } from './runtime.js';
 import { Store, stateRoot, runPath, readState } from './storage.js';
@@ -20,7 +22,7 @@ import type { Provider, Role, Effort } from './types.js';
 const exec = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const help = `Codex Workflow 0.2.0
+const help = `Codex Orchestrator 0.3.0
 Scripted workflows, automatic role-based model routing, isolated edits, live telemetry.
 
   codex-workflow init                         Create a repository model/routing config
@@ -55,6 +57,9 @@ Common options:
   --effort ROLE=N   Override a role's reasoning effort, repeatable
   --jev            Enable Jev decisions and per-job model routing
   --no-jev         Use fixed role profiles for this run
+  --manual         Choose model and effort before every job (default)
+  --auto           Explicitly allow automatic role/Jev assignment
+  --agents-file F  JSON map of exact job IDs to {model,effort} for manual runs
 
 Scripts are trusted local JavaScript. Read generated scripts before running them.
 Worktrees and patches stay isolated until you explicitly use apply.
@@ -64,6 +69,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'V' },
     jev: { type: 'boolean' }, 'no-jev': { type: 'boolean' },
+    manual: { type: 'boolean' }, auto: { type: 'boolean' }, 'agents-file': { type: 'string' },
     repo: { type: 'string' }, 'state-dir': { type: 'string' }, plain: { type: 'boolean' }, json: { type: 'boolean' }, tui: { type: 'boolean' },
     args: { type: 'string' }, 'args-file': { type: 'string' }, target: { type: 'string', multiple: true },
     fix: { type: 'boolean' }, question: { type: 'string' }, concurrency: { type: 'string' }, 'max-agents': { type: 'string' },
@@ -71,7 +77,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     out: { type: 'string' }, task: { type: 'string' }, script: { type: 'boolean' }, live: { type: 'boolean' }, snapshot: { type: 'boolean' },
   } });
   const [command, subject] = positionals;
-  if (values.version) { console.log('0.2.0'); return; }
+  if (values.version) { console.log('0.3.0'); return; }
+  if (values.manual && values.auto) throw new Error('Choose --manual or --auto');
+  if (values.auto && values['agents-file']) throw new Error('--agents-file requires manual mode');
   if (values.jev && values['no-jev']) throw new Error('Choose --jev or --no-jev');
   if (values.help || !command) { console.log(help); return; }
   const root = resolve(values['state-dir'] ?? stateRoot());
@@ -121,18 +129,23 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'watch') { await watch(store, mode); return; }
-    if (values.jev || values['no-jev'] || values.model || values.effort || values.concurrency || values['max-agents'] || values.args || values['args-file'] || values.fix || values.target || values.question) throw new Error('Resume uses the original script, args and model settings. Start a new run to change them.');
+    if (values.manual || values.auto || values['agents-file'] || values.jev || values['no-jev'] || values.model || values.effort || values.concurrency || values['max-agents'] || values.args || values['args-file'] || values.fix || values.target || values.question) throw new Error('Resume uses the original script, args and model settings. Start a new run to change them.');
     await execute(store, new CodexProvider(store.state.config), mode); return;
   }
   if (command === 'demo') {
-    if (values.snapshot) { console.log(renderDashboard(demoState(defaultConfig), { width: process.stdout.columns ?? 108, height: 42, demo: true })); return; }
+    const config = structuredClone(defaultConfig); config.selectionMode = values.manual ? 'manual' : 'auto';
+    if (values['agents-file']) { config.assignments = JSON.parse(await readFile(resolve(values['agents-file']), 'utf8')); config.selectionMode = 'manual'; }
+    const checked = await loadConfig(packageRoot, config);
+    if (values.snapshot) { console.log(renderDashboard(demoState(checked), { width: process.stdout.columns ?? 108, height: 42, demo: true })); return; }
     const repo = await demoRepo();
-    const store = await createRun(root, repo, demoWorkflow, {}, defaultConfig);
+    const store = await createRun(root, repo, demoWorkflow, {}, checked);
     await execute(store, new DemoProvider(), mode, true); return;
   }
   const repoPath = resolve(values.repo ?? process.cwd());
   let config = await loadConfig(repoPath);
   config = structuredClone(config);
+  if (values.manual || values.auto || values['agents-file']) config.selectionMode = values.auto ? 'auto' : 'manual';
+  if (values['agents-file']) config.assignments = JSON.parse(await readFile(resolve(values['agents-file']), 'utf8'));
   if (values.jev || values['no-jev']) config.jev!.enabled = Boolean(values.jev);
   for (const override of values.model ?? []) {
     const index = override.indexOf('='); const role = override.slice(0, index) as Role;
@@ -183,6 +196,15 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     output(checks); return;
   }
   const repo = await repository(repoPath);
+  if (['run', 'plan'].includes(command) && !values.manual && !values.auto && !values['agents-file'] && mode === 'tui') {
+    const input = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      console.log('\nCODEX ORCHESTRATOR / AGENT ASSIGNMENT\n  Manual: approve the model and effort before every job.\n  Auto: allow configured role routing' + (config.jev?.enabled ? ' and Jev decisions.' : '.'));
+      let selected = '';
+      do { selected = (await input.question('Choose [M]anual or [A]uto (default M): ')).trim().toLowerCase(); } while (!['', 'm', 'manual', 'a', 'auto'].includes(selected));
+      config.selectionMode = ['a', 'auto'].includes(selected) ? 'auto' : 'manual';
+    } finally { input.close(); }
+  }
   if (command === 'plan') {
     const request = positionals.slice(1).join(' ');
     if (!request || !values.out) throw new Error('Usage: codex-workflow plan "task" --out workflow.mjs');
@@ -214,7 +236,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 }
 
 async function execute(store: Store, provider: Provider, mode: 'tui' | 'plain' | 'json', demo = false): Promise<void> {
-  const runtime = new Runtime(store, provider); const detach = attachDashboard(runtime, mode, demo);
+  const picker = mode === 'tui' ? new AgentPicker() : undefined;
+  const runtime = new Runtime(store, provider, undefined, picker?.select); const detach = attachDashboard(runtime, mode, demo, picker);
   const onStop = () => runtime.stop(); process.on('SIGINT', onStop); process.on('SIGTERM', onStop);
   let error: unknown;
   try { await runtime.run(); } catch (caught) { error = caught; }

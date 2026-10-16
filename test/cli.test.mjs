@@ -18,11 +18,12 @@ const run = (args, cwd) => exec(process.execPath, [cli, ...args], { cwd, windows
 test('CLI help, version, configuration creation and safe overwrite refusal work without model calls', async t => {
   const cwd = await temporary(t);
   assert.match((await run(['--help'], cwd)).stdout, /automatic role-based model routing/);
-  assert.equal((await run(['--version'], cwd)).stdout.trim(), '0.2.0');
+  assert.equal((await run(['--version'], cwd)).stdout.trim(), '0.3.0');
   await run(['init', '--model', 'scan=custom-model', '--concurrency', '2', '--jev'], cwd);
   const config = JSON.parse(await readFile(join(cwd, '.codex-workflow.json'), 'utf8'));
   assert.equal(config.roles.scan.model, 'custom-model'); assert.equal(config.concurrency, 2);
   assert.equal(config.jev.enabled, true);
+  assert.equal(config.selectionMode, 'manual');
   await assert.rejects(run(['init'], cwd), error => error.stderr.includes('EEXIST'));
 });
 
@@ -34,4 +35,6 @@ test('CLI validates malformed overrides and supports machine-readable empty run 
   await assert.rejects(run(['init', '--concurrency', '0'], cwd), error => error.stderr.includes('Invalid workflow config'));
   await assert.rejects(run(['unknown'], cwd), error => error.stderr.includes('Unknown command'));
   await assert.rejects(run(['demo', '--plain', '--json'], cwd), error => error.stderr.includes('Choose only one'));
+  await assert.rejects(run(['demo', '--manual', '--auto'], cwd), error => error.stderr.includes('Choose --manual or --auto'));
+  await assert.rejects(run(['demo', '--auto', '--agents-file', 'agents.json'], cwd), error => error.stderr.includes('requires manual mode'));
 });

@@ -19,7 +19,7 @@ async function fixture(t, overrides = {}) {
   await git(repo, ['config', 'core.autocrlf', 'false']);
   await writeFile(join(repo, 'value.txt'), 'original\n'); await git(repo, ['add', '.']);
   await git(repo, ['-c', 'user.name=Workflow Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Fixture']);
-  return { root, repo, config: { ...structuredClone(defaultConfig), readRetries: 0, ...overrides } };
+  return { root, repo, config: { ...structuredClone(defaultConfig), selectionMode: 'auto', readRetries: 0, ...overrides } };
 }
 const moduleOf = body => `export const meta={name:'test',description:'Runtime verification fixture'};export default async function(api){const {agent,pipeline,phase,parallel,args,acceptPatch,repeat}=api;${body}}`;
 function provider(run = async request => `result:${request.options.id}`) {
@@ -47,6 +47,46 @@ test('parallel jobs respect concurrency, route models, persist outputs and count
   assert.equal(p.calls[0].model, defaultConfig.roles.scan.model);
   assert.equal(p.calls.at(-1).model, defaultConfig.roles.verify.model);
   assert.equal(store.state.status, 'completed'); assert.equal(store.state.tasks['scan-0'].usage.input_tokens, 10);
+});
+
+test('manual assignment waits for every approval, serializes pickers and never calls Jev', async t => {
+  const { store } = await setup(t, `return pipeline([0,1],i=>agent('inspect '+i,{id:'job-'+i,role:'scan'}));`, {
+    selectionMode: 'manual', jev: { ...structuredClone(defaultConfig.jev), enabled: true },
+  });
+  const approved = new Set();
+  const p = provider(async request => { assert.ok(approved.has(request.options.id)); return 'approved'; }); let prompts = 0, active = 0;
+  const selector = async request => {
+    assert.equal(++active, 1); prompts++;
+    assert.ok(!p.calls.some(call => call.id === request.options.id));
+    await delay(10); active--; approved.add(request.options.id);
+    return { model: `chosen-${request.options.id}`, effort: 'medium' };
+  };
+  await new Runtime(store, p, async () => { throw Error('Jev must not run'); }, selector).run();
+  assert.equal(prompts, 2); assert.deepEqual(p.calls.map(c => c.model), ['chosen-job-0', 'chosen-job-1']);
+  assert.equal(store.state.tasks['job-0'].assignment.effort, 'medium');
+});
+
+test('manual job assignments are exact, missing assignments block work and saved choices survive resume', async t => {
+  const { root, store } = await setup(t, `await agent('inspect',{id:'first',role:'scan'});return agent('verify',{id:'second',role:'verify'});`, {
+    selectionMode: 'manual', assignments: { first: { model: 'explicit-model', effort: 'low' } },
+  });
+  const p = provider(); await assert.rejects(new Runtime(store, p).run(), /Manual selection required for second/);
+  assert.equal(p.calls.length, 1); assert.equal(p.calls[0].model, 'explicit-model');
+  const resumed = await resumeRun(join(root, 'state'), store.state.id);
+  let selections = 0;
+  await new Runtime(resumed, provider(), undefined, async r => { selections++; assert.equal(r.options.id, 'second'); return { model: 'verifier', effort: 'high' }; }).run();
+  assert.equal(selections, 1); assert.equal(resumed.state.status, 'completed');
+});
+
+test('stop cancels manual selection before a worker or worktree starts', async t => {
+  const { store } = await setup(t, `return agent('edit',{id:'edit',role:'edit'});`, { selectionMode: 'manual' });
+  const p = provider(); let ready;
+  const waiting = new Promise(resolve => { ready = resolve; });
+  const runtime = new Runtime(store, p, undefined, async (_request, signal) => {
+    ready(); await delay(10000, undefined, { signal }); return { model: 'unused', effort: 'high' };
+  });
+  const run = runtime.run(); await waiting; runtime.stop(); await assert.rejects(run);
+  assert.equal(p.calls.length, 0); assert.equal(store.state.tasks.edit.worktree, undefined);
 });
 
 test('Jev routes jobs, protects verifier tier and reuses saved decisions on resume', async t => {

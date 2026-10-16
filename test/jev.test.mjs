@@ -49,3 +49,13 @@ test('Jev fails to explicit fallback on missing keys, malformed responses, HTTP 
     assert.equal(timeout.fallback, true); assert.match(timeout.error, /timed out/);
   } finally { clearTimeout(keepAlive); }
 });
+
+test('Jev stops reading oversized responses and obeys cancellation even without a key', async () => {
+  let cancelled = false;
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(100001)); }, cancel() { cancelled = true; } });
+  const judge = createJudge(config, async () => new Response(stream), 'test-key');
+  const result = await judge({}, options, new AbortController().signal);
+  assert.equal(cancelled, true); assert.match(result.error, /exceeds limit/);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(createJudge(config, fetch, '')({}, options, controller.signal));
+});

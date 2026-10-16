@@ -7,6 +7,7 @@ agent(prompt, { id, role, label?, schema?, workspace?, timeoutMs?, webSearch? })
 Every id must be unique, stable, and match /^[a-zA-Z0-9_-]{1,100}$/.
 Roles: plan for decomposition, scan for fast read-only inspection, edit for isolated edits, verify for independent read-only verification, review for final synthesis.
 Models and effort are assigned automatically from these roles by user configuration.
+In manual mode the user chooses a model and effort before each job can start. Never imply a job can bypass this selection. Manual decide() calls return their explicit fallback without a Jev request.
 When Jev is enabled, it selects fast, standard or deep model/effort profiles before each job. Role profiles are fallbacks.
 The API also includes decide(state,{id,instructions,choices:{key:'description',...},fallback:'key'}), returning {choice,confidence,probabilities,model,fallback,usage}.
 Use decide for bounded semantic branches such as which target to inspect or whether to split/retry/stop, only when state contains enough evidence. Use stable unique decision ids (route- prefix reserved). Always supply an explicit conservative fallback. A decision never replaces a required verifier or authorizes patch application. Keep loops bounded with repeat.

@@ -1,5 +1,13 @@
 # Verification — Codex Workflow 0.1.0
 
+## Current update: 0.3.0
+
+31 automated tests pass. Manual assignment is the default for new runs, with an explicit Auto mode. Tests cover approval before launch, serialized prompts under parallel scheduling, exact per-job assignment files, missing assignment refusal, resume selections, cancellation before worktree creation, picker controls, and small terminal layouts. The TypeSafe response contract was checked against the current official HTTP reference. Response bodies are now bounded while streaming, and cancellation is respected even without credentials. Full interactive manual demo completed in a Windows terminal with seven selected jobs. Terminal previews use simulated data. No TypeSafe key was configured: live Jev inference and routing quality remain unverified.
+
+The earlier pilot evidence below refers to 0.1.0, and the Jev section at the end describes 0.2.0.
+
+The installed 0.3.0 CLI completed both seven-job Auto and per-job-map Manual simulations. A real manual Codex smoke check (run `20261016095315-e6baec6a`) selected `gpt-6-luna/high` from an explicit job map and returned schema-valid `{ "ok": true }`. This verifies the manual path through the SDK, not model routing quality or live Jev behavior.
+
 Verified on October 16, 2026, on Windows with Node v24.21.0, Git 2.56.0.windows.2, and @openai/codex-sdk 0.163.0. The installed standalone Codex CLI is 0.162.1; the SDK has its own bundled runtime. Authentication used the existing ChatGPT login.
 
 ## Automated checks
