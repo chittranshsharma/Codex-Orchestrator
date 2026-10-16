@@ -1,5 +1,9 @@
 # Verification — Codex Workflow 0.1.0
 
+## Current release: 0.5.1
+
+42 automated tests pass locally. A Windows terminal check opened chat, switched orchestration on and off, selected `gpt-6.1-sol/low` with the slash form, and completed a real Codex direct turn that returned READY. The new activity screen appeared during the model call and returned to the same chat afterward. The live view, long label wrapping, and model parsing have focused tests. The Impeccable detector returned no findings. GitHub release matrix results are tracked on the v0.5.1 Actions run.
+
 ## Current release: 0.5.0
 
 40 automated tests pass locally. New coverage includes persistent chat thread reuse, follow-ups across ON/OFF transitions, saved-session resumption, queued workflow outcome context, chat ownership locks, cancellation, concurrent-turn rejection, malformed plans, and in-chat patch ownership/repository checks. Existing independent-verifier and conflict gates remain in force. Unsupported primitive structured-output roots are now rejected locally before a model call, and planner instructions specify object roots or plain text.

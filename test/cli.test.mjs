@@ -18,7 +18,7 @@ const run = (args, cwd) => exec(process.execPath, [cli, ...args], { cwd, windows
 test('CLI help, version, configuration creation and safe overwrite refusal work without model calls', async t => {
   const cwd = await temporary(t);
   assert.match((await run(['--help'], cwd)).stdout, /automatic role-based model routing/);
-  assert.equal((await run(['--version'], cwd)).stdout.trim(), '0.5.0');
+  assert.equal((await run(['--version'], cwd)).stdout.trim(), '0.5.1');
   await run(['init', '--model', 'scan=custom-model', '--concurrency', '2', '--jev'], cwd);
   const config = JSON.parse(await readFile(join(cwd, '.codex-workflow.json'), 'utf8'));
   assert.equal(config.roles.scan.model, 'custom-model'); assert.equal(config.concurrency, 2);

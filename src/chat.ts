@@ -95,7 +95,7 @@ export class ChatSession {
     const [command, ...args] = line.trim().split(/\s+/);
     const flag = args[0];
     if (command === '/exit' || command === '/quit') return { text: 'Chat saved.', exit: true };
-    if (command === '/help') return { text: '/orchestrate on|off|status  /agents manual|auto  /model MODEL [EFFORT]  /jev on|off\n/status  /history  /runs  /apply RUN_ID JOB_ID  /exit\nUse a trailing backslash to continue a prompt across lines. Ctrl+C cancels an active turn.' };
+    if (command === '/help') return { text: '/orchestrate on|off|status  /agents manual|auto  /model MODEL [EFFORT]  /jev on|off\n/status  /history  /runs  /apply RUN_ID JOB_ID  /exit\n/model also accepts MODEL/EFFORT. Use a trailing backslash for multiple lines. Ctrl+C cancels an active turn.' };
     if (command === '/status') return { text: this.status() };
     if (command === '/history') return { text: this.state.messages.slice(-20).map(m => `${m.role}: ${m.text}`).join('\n') || 'No messages yet.' };
     if (command === '/runs') return { text: this.state.runs.join('\n') || 'No workflow runs in this chat.' };
@@ -108,7 +108,11 @@ export class ChatSession {
       this.state.config.selectionMode = flag as 'manual' | 'auto';
     } else if (command === '/model') {
       if (!flag || args.length > 2) throw new Error('Usage: /model MODEL [EFFORT]');
-      this.state.profile = validateProfile({ model: flag, effort: (args[1] ?? this.state.profile.effort) as ModelProfile['effort'] });
+      const efforts: ModelProfile['effort'][] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+      const slash = flag.lastIndexOf('/');
+      const shorthandEffort = slash > 0 && efforts.includes(flag.slice(slash + 1) as ModelProfile['effort']) ? flag.slice(slash + 1) as ModelProfile['effort'] : undefined;
+      if (shorthandEffort && args[1]) throw new Error('Choose one form: /model MODEL EFFORT or /model MODEL/EFFORT');
+      this.state.profile = validateProfile({ model: shorthandEffort ? flag.slice(0, slash) : flag, effort: (args[1] ?? shorthandEffort ?? this.state.profile.effort) as ModelProfile['effort'] });
     } else if (command === '/jev') {
       if (!this.state.config.jev || !['on', 'off'].includes(flag ?? '') || args.length !== 1) throw new Error('Usage: /jev on|off');
       this.state.config.jev.enabled = flag === 'on';

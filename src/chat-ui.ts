@@ -11,13 +11,23 @@ import type { ChatState, WorkflowOutcome } from './chat.js';
 import { createRun, resumeRun, writeReport } from './runtime.js';
 import { applyPatch } from './git.js';
 import { CodexProvider } from './provider.js';
-import { clean } from './dashboard.js';
+import { clean, renderChatActivity, renderChatHeader, renderChatLabel, renderChatState } from './dashboard.js';
 import { reviewAndLaunch } from './guided.js';
 import type { Store } from './storage.js';
 import type { Config, Provider } from './types.js';
 const exec = promisify(execFile);
 export type RunExecutor = (store: Store, provider: Provider, mode: 'tui' | 'plain' | 'json', demo?: boolean, signal?: AbortSignal) => Promise<void>;
 const print = (value: string) => console.log(value.split('\n').map(line => clean(line)).join('\n'));
+const width = () => process.stdout.columns ?? 100;
+const prompt = (on: boolean) => `\x1b[38;5;${on ? 215 : 117}m\x1b[1mcwf ${on ? 'ON' : 'OFF'}\x1b[0m \x1b[38;5;250m>\x1b[0m `;
+function friendlyError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed = JSON.parse(raw) as { error?: { message?: string } };
+    if (parsed.error?.message) return parsed.error.message;
+  } catch { /* The SDK may return either text or a JSON error envelope. */ }
+  return raw;
+}
 
 export async function applyChatPatch(root: string, state: Pick<ChatState, 'runs' | 'repo'>, runId: string, jobId: string): Promise<string> {
   if (!state.runs.includes(runId)) throw new Error('Run must belong to this chat');
@@ -51,10 +61,45 @@ class ChatInput {
   }
   close() { this.input?.close(); this.input = undefined; }
 }
-function activity(event: ThreadEvent): void {
-  if (event.type === 'item.started' && event.item.type === 'command_execution') print(`  [command] ${event.item.command}`);
-  if (event.type === 'item.started' && event.item.type === 'mcp_tool_call') print(`  [tool] ${event.item.server}/${event.item.tool}`);
-  if (event.type === 'item.completed' && event.item.type === 'file_change') print(`  [files] ${event.item.changes.map(c => c.path).join(', ')}`);
+function activityLine(event: ThreadEvent): string | undefined {
+  if (event.type === 'thread.started') return 'Codex thread connected';
+  if (event.type === 'turn.started') return 'Thinking through the request';
+  if (event.type === 'item.started' && event.item.type === 'command_execution') return `COMMAND  ${event.item.command}`;
+  if (event.type === 'item.started' && event.item.type === 'mcp_tool_call') return `TOOL     ${event.item.server}/${event.item.tool}`;
+  if (event.type === 'item.completed' && event.item.type === 'file_change') return `FILES    ${event.item.changes.map(c => c.path).join(', ')}`;
+  if (event.type === 'turn.completed') return 'Response ready';
+  return undefined;
+}
+class ChatActivity {
+  private readonly startedAt = Date.now();
+  private readonly events: string[] = [];
+  private timer?: NodeJS.Timeout;
+  private active = false;
+  constructor(private readonly state: ChatState, private readonly request: string) {}
+  start() {
+    if (!process.stdout.isTTY) return;
+    this.active = true;
+    process.stdout.write('\x1b[?1049h\x1b[?25l');
+    this.timer = setInterval(() => this.draw(), 1000);
+    this.draw();
+  }
+  event(event: ThreadEvent) {
+    const line = activityLine(event);
+    if (!line) return;
+    this.events.push(line);
+    if (this.events.length > 50) this.events.shift();
+    this.draw();
+  }
+  stop() {
+    if (!this.active) return;
+    this.active = false;
+    if (this.timer) clearInterval(this.timer);
+    process.stdout.write('\x1b[?25h\x1b[?1049l');
+  }
+  private draw() {
+    if (!this.active) return;
+    process.stdout.write('\x1b[H\x1b[2J' + renderChatActivity(this.state, this.request, this.events, this.startedAt, width(), process.stdout.rows ?? 30));
+  }
 }
 export async function runChat(root: string, repo: string, config: Config, execute: RunExecutor, id?: string, orchestrate = false): Promise<void> {
   const state = await openChat(root, repo, config, id);
@@ -62,11 +107,13 @@ export async function runChat(root: string, repo: string, config: Config, execut
   const session = new ChatSession(root, state, new SdkChatEngine(state.config));
   await session.lock();
   const inputReader = new ChatInput();
+  let currentActivity: ChatActivity | undefined;
   let terminating = false;
   const stop = () => session.stop();
   const terminate = () => { terminating = true; session.stop(); };
   process.on('SIGINT', stop); process.on('SIGTERM', terminate);
   const workflow = async (source: string, request: string, signal: AbortSignal): Promise<WorkflowOutcome> => {
+    currentActivity?.stop(); currentActivity = undefined;
     inputReader.close();
     const path = join(session.directory, `workflow-${randomUUID()}.mjs`);
     await writeFile(path, source, { flag: 'wx', mode: 0o600 });
@@ -91,12 +138,15 @@ export async function runChat(root: string, repo: string, config: Config, execut
     });
     return outcome;
   };
-  print(`\nCODEX ORCHESTRATOR / CHAT\n${session.status()}\nType prompts and follow-ups here. /orchestrate on or off switches this chat.\n/help lists controls. /exit saves and closes.\nResume later: cwf chat ${state.id}\n`);
+  process.stdout.write('\x1b[2J\x1b[H');
+  console.log(renderChatHeader(state, width()));
+  console.log(renderChatLabel('SYSTEM', `Persistent chat ready. Resume later with: cwf chat ${state.id}`, width()));
+  console.log();
   try {
     await session.save();
     while (!terminating) {
       const history = state.messages.filter(m => m.role === 'user').slice(-50).reverse().map(m => m.text);
-      let input = await inputReader.ask(`cwf [${state.orchestrate ? 'ON' : 'OFF'}] > `, history);
+      let input = await inputReader.ask(prompt(state.orchestrate), history);
       if (input === null) break;
       while (input.endsWith('\\')) {
         const next = await inputReader.ask('... ');
@@ -114,15 +164,27 @@ export async function runChat(root: string, repo: string, config: Config, execut
           print(message); continue;
         }
         if (input.startsWith('/')) {
-          const result = await session.command(input); print(result.text); if (result.exit) break;
+          const result = await session.command(input);
+          if (['/status', '/orchestrate', '/agents', '/model', '/jev'].includes(input.trim().split(/\s+/)[0]!)) console.log(renderChatState(state, width()));
+          else print(result.text);
+          if (result.exit) break;
           continue;
         }
-        print(`\n${state.orchestrate ? 'Planning workflow' : 'Codex'} / ${state.profile.model} / ${state.profile.effort} ...`);
-        const result = await session.turn(input, workflow, activity);
-        print(`\n${result}\n`);
-      } catch (error) { print(`\n${error instanceof Error ? error.message : String(error)}\nChat is still open. Use /status or send another prompt.\n`); }
+        console.log();
+        console.log(renderChatLabel('YOU', input.replace(/\s+/g, ' '), width()));
+        currentActivity = new ChatActivity(state, input.replace(/\s+/g, ' '));
+        currentActivity.start();
+        const result = await session.turn(input, workflow, event => currentActivity?.event(event));
+        currentActivity?.stop(); currentActivity = undefined;
+        console.log(); print(result); console.log();
+      } catch (error) {
+        currentActivity?.stop(); currentActivity = undefined;
+        console.log(); console.log(renderChatLabel('ERROR', friendlyError(error), width()));
+        console.log(renderChatLabel('SYSTEM', 'Chat remains open. Use /status or send another prompt.', width())); console.log();
+      }
     }
   } finally {
+    currentActivity?.stop();
     inputReader.close();
     process.off('SIGINT', stop); process.off('SIGTERM', terminate);
     await session.save(); await session.close();

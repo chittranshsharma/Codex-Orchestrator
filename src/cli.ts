@@ -25,7 +25,7 @@ import type { Provider, Role, Effort } from './types.js';
 const exec = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const help = `Codex Orchestrator 0.5.0
+const help = `Codex Orchestrator 0.5.1
 Scripted workflows, automatic role-based model routing, isolated edits, live telemetry.
 
   cwf                                        Open persistent chat; orchestration starts off
@@ -87,7 +87,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   } });
   let [command, subject] = positionals;
   if (!command && !values.help && process.stdin.isTTY && process.stdout.isTTY) command = 'chat';
-  if (values.version) { console.log('0.5.0'); return; }
+  if (values.version) { console.log('0.5.1'); return; }
   if (values.manual && values.auto) throw new Error('Choose --manual or --auto');
   if (values.auto && values['agents-file']) throw new Error('--agents-file requires manual mode');
   if (values.jev && values['no-jev']) throw new Error('Choose --jev or --no-jev');

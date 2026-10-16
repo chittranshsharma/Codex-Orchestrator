@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChatSession, openChat, listChats, chatPath } from '../dist/chat.js';
 import { defaultConfig } from '../dist/config.js';
+import { renderChatActivity, renderChatHeader, renderChatLabel } from '../dist/dashboard.js';
 
 async function fixture(t, run) {
   const root = await mkdtemp(join(tmpdir(), 'cwf-chat-test-'));
@@ -85,4 +86,25 @@ test('invalid commands and malformed plans cannot launch a workflow or corrupt s
   assert.equal(f.state.orchestrate, false);
   await f.session.command('/orchestrate on');
   await assert.rejects(f.session.turn('plan', async () => { assert.fail('bad plan must not run'); }), /schema validation/);
+});
+
+test('model command accepts separate and slash effort forms without corrupting the model ID', async t => {
+  const f = await fixture(t);
+  await f.session.command('/model gpt-5.6-sol/low');
+  assert.deepEqual(f.state.profile, { model: 'gpt-5.6-sol', effort: 'low' });
+  await f.session.command('/model gpt-6.1-sol xhigh');
+  assert.deepEqual(f.state.profile, { model: 'gpt-6.1-sol', effort: 'xhigh' });
+  await assert.rejects(f.session.command('/model gpt-6.1-sol/high low'), /Choose one form/);
+});
+
+test('chat terminal renders a bounded activity view and keeps important labels readable', async t => {
+  const f = await fixture(t);
+  const header = renderChatHeader(f.state, 80);
+  assert.match(header, /DIRECT CHAT/);
+  const screen = renderChatActivity(f.state, 'Inspect this project', ['Thinking', 'COMMAND  rg --files'], Date.now(), 80, 16);
+  assert.ok(screen.split('\n').length <= 16);
+  assert.match(screen, /LIVE ACTIVITY/);
+  const message = renderChatLabel('ERROR', 'The requested model is unsupported for this account; select a model listed by Codex.', 48);
+  assert.match(message, /select a model listed by Codex/);
+  assert.ok(message.split('\n').every(line => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').length <= 48));
 });

@@ -6,7 +6,7 @@
 
 Script the mission. Route the models. Run the agents. Verify the patch.
 
-[![Version](https://img.shields.io/badge/version-0.5.0-a78bfa)](package.json)
+[![Version](https://img.shields.io/badge/version-0.5.1-a78bfa)](package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522-84cc16)](https://nodejs.org/)
 [![MIT](https://img.shields.io/badge/license-MIT-60a5fa)](LICENSE)
 [![Codex SDK](https://img.shields.io/badge/built_with-Codex_SDK-f5a97f)](https://learn.chatgpt.com/docs/codex-sdk)
@@ -53,13 +53,13 @@ Requirements: **Node.js 22+**, **Git**, and Codex authentication with access to 
 Install the compiled public release directly:
 
 ```sh
-npm install -g https://github.com/chittranshsharma/Codex-Orchestrator/releases/download/v0.5.0/codex-workflow-0.5.0.tgz
+npm install -g https://github.com/chittranshsharma/Codex-Orchestrator/releases/download/v0.5.1/codex-workflow-0.5.1.tgz
 cwf doctor
 cd /path/to/your/project
 cwf
 ```
 
-You are now in a **persistent coding chat**, with orchestration initially **OFF**. Give a prompt, read the answer, then give follow-ups in the same conversation:
+You are now in a **persistent coding chat**, with orchestration initially **OFF**. Chat opens with a colored control header. While the lead works, a live terminal view shows the current mode, model, request, elapsed time, and Codex activity. Worker workflows switch to the separate multi-agent dashboard. Give a prompt, read the answer, then give follow-ups in the same conversation:
 
 ```text
 cwf [OFF] > Explain the authentication flow in this repository.
@@ -78,7 +78,7 @@ Switching modes preserves the same lead Codex thread. In OFF mode the lead handl
 | --- | --- |
 | `/orchestrate on` / `/orchestrate off` | Switch the next prompt's execution mode |
 | `/agents manual` / `/agents auto` | Choose worker assignment mode |
-| `/model MODEL [EFFORT]` | Set the lead model/effort while retaining its thread |
+| `/model MODEL [EFFORT]` | Set the lead model/effort while retaining its thread; `MODEL/EFFORT` also works |
 | `/jev on` / `/jev off` | Toggle Jev for Auto workflow routing |
 | `/status` / `/history` / `/runs` | Inspect settings, recent transcript, or workflow IDs |
 | `/apply RUN_ID JOB_ID` | Apply a verified patch from a workflow in this chat |

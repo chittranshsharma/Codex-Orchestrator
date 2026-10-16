@@ -2,6 +2,7 @@ import { emitKeypressEvents } from 'node:readline';
 import type { Runtime } from './runtime.js';
 import type { RunState } from './types.js';
 import type { AgentPicker } from './selection.js';
+import type { ChatState } from './chat.js';
 
 const reset = '\x1b[0m';
 const palette = { plan: 183, scan: 117, edit: 215, verify: 157, review: 183, muted: 250, line: 60, text: 255, error: 203 };
@@ -14,6 +15,67 @@ const num = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}m` : n >= 1000 ? `
 const rule = (title: string, width: number) => paint(clip(` -- ${title} `, width), palette.muted) + paint('-'.repeat(Math.max(0, width - title.length - 5)), palette.line);
 const status = { queued: 'WAIT', running: 'LIVE', completed: 'DONE', failed: 'FAIL', cancelled: 'STOP', skipped: 'SKIP' };
 export interface ViewOptions { width?: number; height?: number; selected?: number; details?: boolean; logs?: string[]; demo?: boolean }
+
+export function renderChatHeader(state: ChatState, width = 100): string {
+  width = Math.max(48, Math.min(width, 120));
+  const on = state.orchestrate;
+  const mode = on ? 'ORCHESTRATION ON' : 'DIRECT CHAT';
+  const location = on ? 'isolated worker jobs' : 'current checkout';
+  const selection = (state.config.selectionMode ?? 'manual').toUpperCase();
+  const jev = state.config.jev?.enabled ? 'ON / Auto only' : 'OFF';
+  const title = ` CODEX ORCHESTRATOR  ${on ? 'ON' : 'OFF'} `;
+  const titleTint = on ? palette.edit : palette.scan;
+  const lines = [
+    `\x1b[48;5;${on ? 54 : 24}m${bold(paint(pad(title, width)))}`,
+    paint(pad(` ${mode}  /  ${location}`, width), titleTint),
+    paint(pad(` LEAD   ${state.profile.model}  /  ${state.profile.effort}`, width), palette.plan),
+    paint(pad(` WORKERS ${selection}   JEV ${jev}   RUNS ${state.runs.length}`, width), palette.muted),
+    paint(pad(` SESSION ${state.id}`, width), palette.muted),
+    rule('CHAT', width),
+    paint(clip(' /orchestrate on|off   /agents manual|auto   /model MODEL [EFFORT]   /help', width), palette.scan),
+  ];
+  return lines.join('\n');
+}
+
+export function renderChatState(state: ChatState, width = 100): string {
+  width = Math.max(48, Math.min(width, 120));
+  const on = state.orchestrate;
+  const line = `${on ? 'ORCHESTRATION ON' : 'DIRECT CHAT'}  |  ${state.profile.model}/${state.profile.effort}  |  workers ${(state.config.selectionMode ?? 'manual').toUpperCase()}  |  Jev ${state.config.jev?.enabled ? 'ON' : 'OFF'}`;
+  return `\x1b[48;5;${on ? 54 : 24}m${bold(paint(pad(` ${line}`, width)))}`;
+}
+
+export function renderChatLabel(label: 'YOU' | 'CODEX' | 'PLAN' | 'SYSTEM' | 'ERROR', text: string, width = 100): string {
+  width = Math.max(48, Math.min(width, 120));
+  const tint = label === 'ERROR' ? palette.error : label === 'PLAN' ? palette.edit : label === 'CODEX' ? palette.verify : label === 'YOU' ? palette.scan : palette.muted;
+  const content = clean(text);
+  const firstRoom = width - label.length - 4;
+  const restRoom = width - 2;
+  const rows = [`${paint(bold(`[${label}]`), tint)} ${paint(content.slice(0, firstRoom), label === 'SYSTEM' ? palette.muted : palette.text)}`];
+  for (let i = firstRoom; i < content.length; i += restRoom) rows.push(`  ${paint(content.slice(i, i + restRoom), label === 'SYSTEM' ? palette.muted : palette.text)}`);
+  return rows.join('\n');
+}
+
+export function renderChatActivity(state: ChatState, request: string, events: string[], startedAt: number, width = 100, height = 30): string {
+  width = Math.max(48, Math.min(width, 120)); height = Math.max(12, height);
+  const on = state.orchestrate;
+  const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const title = on ? 'PLANNING WORKFLOW' : 'CODING SESSION';
+  const lines = [
+    `\x1b[48;5;${on ? 54 : 24}m${bold(paint(pad(` CODEX ORCHESTRATOR  /  ${title}`, width)))}`,
+    paint(pad(` ${on ? 'ORCHESTRATION ON' : 'DIRECT CHAT'}  |  ${state.profile.model}/${state.profile.effort}  |  ${elapsed}s`, width), on ? palette.edit : palette.scan),
+    paint(pad(` Workers ${String(state.config.selectionMode ?? 'manual').toUpperCase()}  /  Jev ${state.config.jev?.enabled ? 'ON' : 'OFF'}  /  ${state.runs.length} saved runs`, width), palette.muted),
+    '', rule('YOUR REQUEST', width),
+    paint(clip(` ${request}`, width), palette.text),
+    '', rule('EXECUTION PATH', width),
+    paint(clip(on ? ` LEAD ${state.profile.model} -> PLAN -> REVIEW` : ` LEAD ${state.profile.model} -> TOOLS -> CHECKOUT -> RESPONSE`, width), palette.plan),
+    ...(on ? [paint(clip(`                         |  ${String(state.config.selectionMode ?? 'manual').toUpperCase()}${state.config.jev?.enabled ? ' + JEV' : ''} WORKER ROUTING`, width), palette.edit),
+      paint(clip('                         +-> SCAN / EDIT / VERIFY -> REPORT', width), palette.verify)] : []),
+    '', rule('LIVE ACTIVITY', width),
+  ];
+  const room = Math.max(1, height - lines.length - 3);
+  lines.push(...(events.length ? events.slice(-room) : ['Waiting for Codex...']).map(event => paint(clip(` ${event}`, width), palette.scan)));
+  return [...lines.slice(0, height - 2), '', paint(clip(' Ctrl+C cancel turn  /  chat returns when Codex finishes', width), palette.muted)].join('\n');
+}
 
 export function renderDashboard(state: RunState, options: ViewOptions = {}): string {
   const width = Math.max(24, Math.min(options.width ?? 110, 180)), height = Math.max(12, options.height ?? 36);
