@@ -1,6 +1,6 @@
 export const authoringReference = `Write a self-contained JavaScript ES module for Codex Workflow.
 Export const meta = { name: 'short-kebab-name', description: 'what it does' }.
-Export default async function({ args, agent, pipeline, parallel, phase, log, repeat, acceptPatch }) { ... }.
+Export default async function({ args, agent, pipeline, parallel, phase, log, repeat, acceptPatch, decide }) { ... }.
 Do not import modules, read files, run processes, access network APIs, or use process/global state in the script.
 The script coordinates agents. Agents perform repository reads, edits, and commands.
 agent(prompt, { id, role, label?, schema?, workspace?, timeoutMs?, webSearch? }) returns a JSON value with schema, or text otherwise.

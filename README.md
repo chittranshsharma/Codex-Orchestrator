@@ -6,7 +6,7 @@
 
 Script the mission. Route the models. Run the agents. Verify the patch.
 
-[![Version](https://img.shields.io/badge/version-0.3.0-a78bfa)](package.json)
+[![Version](https://img.shields.io/badge/version-0.4.0-a78bfa)](package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522-84cc16)](https://nodejs.org/)
 [![MIT](https://img.shields.io/badge/license-MIT-60a5fa)](LICENSE)
 [![Codex SDK](https://img.shields.io/badge/built_with-Codex_SDK-f5a97f)](https://learn.chatgpt.com/docs/codex-sdk)
@@ -50,27 +50,56 @@ Task → saved workflow → parallel scans → isolated edits → verification �
 
 Requirements: **Node.js 22+**, **Git**, and Codex authentication with access to your chosen models. Install and sign in to [Codex CLI](https://developers.openai.com/codex/cli/) first if needed. The SDK bundles its worker runtime and uses existing authentication. A working ChatGPT login can be used; account limits apply.
 
+Install the compiled public release directly:
+
+```sh
+npm install -g https://github.com/chittranshsharma/Codex-Orchestrator/releases/download/v0.4.0/codex-workflow-0.4.0.tgz
+cwf doctor
+cd /path/to/your/project
+cwf
+```
+
+You are now in the **real task launcher**:
+
+1. Describe your task, such as "Find and fix the bug that keeps expired sessions logged in."
+2. Choose **Manual** or **Auto**. Manual asks for the model and effort before each job, including planning.
+3. The planner writes a workflow. Read the displayed source and type **RUN** to launch it, or press Enter to save it for later.
+4. Watch the agents work, then read the printed result and saved report.
+5. If edits were prepared, review their patches and explicitly apply an independently verified edit.
+
+You can supply the prompt immediately:
+
+```sh
+cwf start "Find and fix the expired-session bug" --manual
+```
+
+The launcher makes real Codex calls and uses your account limits. It is a task/workflow launcher, not an interactive chat replacement. For follow-up conversation and everyday tasks, keep using `codex`. Nothing wraps or intercepts it.
+
+| You want to… | Type |
+| --- | --- |
+| Use normal Codex | `codex` |
+| Prompt a coordinated task | `cwf` or `cwf start "your task"` |
+| Run the built-in audit | `cwf run audit --target src --manual` |
+| Preview the UI without model calls | `cwf demo` (optional) |
+
+`cwf`, `codex-orchestrator`, and `codex-workflow` launch the same program. The internal npm package name is `codex-workflow`. The GitHub release is public; an npm registry publication is separate and is not required for this installation.
+
+For custom defaults, run `cwf init`, review `.codex-workflow.json`, and commit it. Edits require a clean source checkout. Choose models available to your account.
+
+<details>
+<summary>Build and install from source instead</summary>
+
 ```sh
 git clone https://github.com/chittranshsharma/Codex-Orchestrator.git
 cd Codex-Orchestrator
 npm ci
 npm run build
 npm link
-
-cwf doctor
-cwf demo
 ```
 
-`cwf` and `codex-workflow` are equivalent. The internal package name is currently `codex-workflow`. There is no npm registry release yet; install from this repository.
+</details>
 
-Move into the Git repository you want to work on:
-
-```sh
-cd /path/to/your/project
-cwf init
-```
-
-Review `.codex-workflow.json` and select models your account supports. Commit that configuration before edit workflows, which require a clean checkout.
+You can also run prepared workflows directly:
 
 ```sh
 # Inspect code and independently verify findings.

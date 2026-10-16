@@ -1,5 +1,7 @@
 # Codex Workflow
 
+The guided real-task entry point is `cwf` (interactive terminal) or `cwf start "task"`. It prompts for a task and Manual/Auto selection, uses the real planner, displays the generated script, and requires typing RUN before executing it. Enter saves without executing. `codex` remains a separate ordinary coding/chat command. `cwf demo` is an optional simulation only. Noninteractive tools should continue to use `plan`, inspect the saved source, and then use `run`. Public compiled packages are distributed through GitHub Releases.
+
 Version 0.3 defaults new runs to Manual assignment. Use `--manual` to choose model/effort before every job in a terminal, or `--manual --agents-file agents.json` for exact per-job assignments in command tools. Missing assignments fail visibly. `--auto` explicitly enables role routing and, with `--jev`, dynamic Jev routing. An interactive run without a mode flag asks you to choose. Manual mode never calls Jev, and workflow `decide` calls use their explicit fallback. Saved selections are reused on resume unless an invalidated job's prompt changes. Older checkpoints retain their saved behavior.
 
 A terminal workflow runner built on the official Codex SDK. A lead Codex model can write a reusable JavaScript workflow. The script coordinates smaller jobs, routes each role to its configured model, and keeps intermediate results in local run files. The terminal shows live job activity and actual token usage reported by Codex.

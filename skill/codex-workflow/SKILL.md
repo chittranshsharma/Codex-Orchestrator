@@ -7,6 +7,8 @@ description: "Plan, run, inspect, and resume scripted Codex workflows using the 
 
 Use the installed `codex-workflow` command (`cwf` is an alias). Run `codex-workflow --help` if the local CLI options are needed.
 
+For a human in an interactive terminal, `cwf` or `cwf start "task"` prompts for the task, mode, workflow review and execution. This is real Codex work. `demo` is only a simulation. In noninteractive command tools use the explicit plan/review/run flow below. Normal `codex` use remains independent and unaffected.
+
 Run commands from the intended Git repository, or specify `--repo` with its absolute path. Use `--plain` in Codex's command tools, or `--json` when parsing events. The interactive dashboard runs in a real terminal; it is not a native Codex panel.
 
 New runs default to Manual. Preserve the user's choice of models for every job: use `--manual --agents-file <reviewed-map.json>` for noninteractive execution, or let the user run `--manual` in their terminal picker. The JSON file maps exact job IDs to `{model,effort}`. Missing assignments block that job visibly. Use `--auto` only when the user explicitly chooses automatic assignment; `--jev` alone does not grant that choice. Manual disables Jev requests and uses explicit fallbacks for workflow decisions. Saved manual selections survive resume; changed downstream prompts prompt again.

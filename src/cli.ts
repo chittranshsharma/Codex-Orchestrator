@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { emitKeypressEvents } from 'node:readline';
 import { createInterface } from 'node:readline/promises';
 import { AgentPicker } from './selection.js';
+import { reviewAndLaunch } from './guided.js';
 import { defaultConfig, loadConfig } from './config.js';
 import { Runtime, createRun, resumeRun, writeReport } from './runtime.js';
 import { Store, stateRoot, runPath, readState } from './storage.js';
@@ -22,9 +23,11 @@ import type { Provider, Role, Effort } from './types.js';
 const exec = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const help = `Codex Orchestrator 0.3.0
+const help = `Codex Orchestrator 0.4.0
 Scripted workflows, automatic role-based model routing, isolated edits, live telemetry.
 
+  cwf                                        Open the guided task launcher in a terminal
+  cwf start "your task"                       Plan, review, then launch real Codex jobs
   codex-workflow init                         Create a repository model/routing config
   codex-workflow doctor [--live]              Check install/login; optionally probe models
   codex-workflow plan "task" --out task.mjs    Generate a workflow for review
@@ -76,16 +79,18 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     model: { type: 'string', multiple: true }, effort: { type: 'string', multiple: true },
     out: { type: 'string' }, task: { type: 'string' }, script: { type: 'boolean' }, live: { type: 'boolean' }, snapshot: { type: 'boolean' },
   } });
-  const [command, subject] = positionals;
-  if (values.version) { console.log('0.3.0'); return; }
+  let [command, subject] = positionals;
+  if (!command && !values.help && process.stdin.isTTY && process.stdout.isTTY) command = 'start';
+  if (values.version) { console.log('0.4.0'); return; }
   if (values.manual && values.auto) throw new Error('Choose --manual or --auto');
   if (values.auto && values['agents-file']) throw new Error('--agents-file requires manual mode');
   if (values.jev && values['no-jev']) throw new Error('Choose --jev or --no-jev');
   if (values.help || !command) { console.log(help); return; }
   const root = resolve(values['state-dir'] ?? stateRoot());
   const output = (value: unknown) => console.log(values.json ? JSON.stringify(value) : typeof value === 'string' ? value.split('\n').map(line => clean(line)).join('\n') : JSON.stringify(value, null, 2));
-  if (!['init', 'doctor', 'plan', 'run', 'list', 'show', 'watch', 'resume', 'save', 'apply', 'demo', 'install-skill'].includes(command)) throw new Error(`Unknown command: ${command}. Use --help.`);
-  if (command !== 'plan' && positionals.length > 2) throw new Error('Unexpected positional arguments. Use --help.');
+  if (!['start', 'init', 'doctor', 'plan', 'run', 'list', 'show', 'watch', 'resume', 'save', 'apply', 'demo', 'install-skill'].includes(command)) throw new Error(`Unknown command: ${command}. Use --help.`);
+  if (!['plan', 'start'].includes(command) && positionals.length > 2) throw new Error('Unexpected positional arguments. Use --help.');
+  if (command === 'start' && (!process.stdin.isTTY || !process.stdout.isTTY || values.plain || values.json)) throw new Error('start needs an interactive terminal. In command tools use plan "task" --out task.mjs, inspect it, then run task.mjs with explicit assignments or --auto.');
   if ([values.plain, values.json, values.tui].filter(Boolean).length > 1) throw new Error('Choose only one of --plain, --json, --tui');
   if (values.tui && (!process.stdout.isTTY || !process.stdin.isTTY)) throw new Error('--tui needs an interactive terminal. Use --plain or --json here.');
   const mode = values.json ? 'json' : values.plain || !process.stdout.isTTY || !process.stdin.isTTY ? 'plain' : 'tui';
@@ -196,7 +201,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     output(checks); return;
   }
   const repo = await repository(repoPath);
-  if (['run', 'plan'].includes(command) && !values.manual && !values.auto && !values['agents-file'] && mode === 'tui') {
+  let guidedRequest = positionals.slice(1).join(' ');
+  if (command === 'start' && !guidedRequest) {
+    console.log('\nCODEX ORCHESTRATOR / REAL TASK\nDescribe a task for this repository. Use codex separately for ordinary chat.');
+    guidedRequest = (await question('What would you like to work on? ')).trim();
+    if (!guidedRequest) { output('No task entered. Nothing started.'); return; }
+  }
+  if (['run', 'plan', 'start'].includes(command) && !values.manual && !values.auto && !values['agents-file'] && mode === 'tui') {
     const input = createInterface({ input: process.stdin, output: process.stdout });
     try {
       console.log('\nCODEX ORCHESTRATOR / AGENT ASSIGNMENT\n  Manual: approve the model and effort before every job.\n  Auto: allow configured role routing' + (config.jev?.enabled ? ' and Jev decisions.' : '.'));
@@ -205,21 +216,40 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       config.selectionMode = ['a', 'auto'].includes(selected) ? 'auto' : 'manual';
     } finally { input.close(); }
   }
-  if (command === 'plan') {
-    const request = positionals.slice(1).join(' ');
-    if (!request || !values.out) throw new Error('Usage: codex-workflow plan "task" --out workflow.mjs');
-    const path = resolve(values.out);
+  if (command === 'plan' || command === 'start') {
+    const request = command === 'start' ? guidedRequest : positionals.slice(1).join(' ');
+    if (!request || (command === 'plan' && !values.out)) throw new Error('Usage: codex-workflow plan "task" --out workflow.mjs');
+    const path = values.out ? resolve(values.out) : undefined;
+    if (path) {
     if (!path.endsWith('.mjs')) throw new Error('Workflow output must end in .mjs');
     try { await access(path); throw new Error('Output already exists; choose another --out path'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
     const store = await createRun(root, repo, plannerWorkflow, { request, reference: authoringReference }, config);
     await execute(store, new CodexProvider(config), mode);
     const generated = store.state.result as { source?: string };
     if (!generated?.source) throw new Error('Planner returned no source');
     const candidate = join(store.directory, 'generated.mjs'); await writeFile(candidate, generated.source);
     await exec(process.execPath, ['--check', candidate], { windowsHide: true });
-    await writeFile(path, generated.source, { flag: 'wx' });
-    output(`Saved ${path}. Read the script before running: codex-workflow run "${path}"`); return;
+    if (path) await writeFile(path, generated.source, { flag: 'wx' });
+    if (command === 'plan') { output(`Saved ${path}. Read the script before running: codex-workflow run "${path}"`); return; }
+    if (values.args && values['args-file']) throw new Error('Choose --args or --args-file');
+    const input = values['args-file'] ? JSON.parse(await readFile(resolve(values['args-file']), 'utf8')) : values.args ? JSON.parse(values.args) : {};
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Workflow args must be a JSON object');
+    const args = { request, ...input, ...(values.target ? { targets: values.target } : {}), ...(values.fix ? { fix: true } : {}) };
+    const launched = await reviewAndLaunch({
+      path: candidate,
+      preview: source => { output(`\nGENERATED WORKFLOW / ${path ?? candidate}\n${source}\n\nRead this trusted JavaScript before launching. Jobs use real Codex sessions and your account limits. Changes are prepared in isolated worktrees; applying patches is a separate action.`); },
+      confirm: () => question('Type RUN to execute this workflow, or Enter to save and exit: '),
+      launch: async source => {
+        const run = await createRun(root, repo, source, args, config);
+        await execute(run, new CodexProvider(config), mode);
+        output(`\nTask result:\n${typeof run.state.result === 'string' ? run.state.result : JSON.stringify(run.state.result, null, 2)}`);
+        output('Inspect the report and any verified patches. Use cwf apply RUN_ID --task EDIT_JOB_ID when ready.');
+      },
+    });
+    if (!launched) output(`Saved without running: ${path ?? candidate}\nLater: cwf run "${path ?? candidate}" --manual`);
+    return;
   }
   if (command !== 'run') throw new Error(`Unknown command: ${command}. Use --help.`);
   if (!subject) throw new Error('run needs a bundled workflow name or a .mjs path');
@@ -233,6 +263,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const source = await readFile(path, 'utf8');
   const store = await createRun(root, repo, source, args, config);
   await execute(store, new CodexProvider(config), mode);
+}
+
+async function question(prompt: string): Promise<string> {
+  const input = createInterface({ input: process.stdin, output: process.stdout });
+  try { return await input.question(prompt); } finally { input.close(); }
 }
 
 async function execute(store: Store, provider: Provider, mode: 'tui' | 'plain' | 'json', demo = false): Promise<void> {
