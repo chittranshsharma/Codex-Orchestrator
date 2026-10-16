@@ -1,5 +1,13 @@
 # Verification — Codex Workflow 0.1.0
 
+## Current release: 0.4.0
+
+33 automated tests pass locally. The GitHub matrix also passed on Windows (Node 22 and 24), Ubuntu (Node 22), and macOS (Node 22): workflow run `38884621621`. These are controlled runtime tests; real account-backed model pilots remain Windows-only.
+
+The guided `start` launcher was exercised in a real terminal against the Codex SDK. Planning run `20261016095818-a6be6eb8` generated a minimal workflow, the source was displayed for review, typing RUN launched execution run `20261016095844-1c880693`, and its real scan worker returned READY. A repeat (`20261016100013-a4710f56`) also returned READY. Tests verify that source is only launched after exact confirmation and that changes during review block execution. The executable flushes stdout/stderr before explicitly exiting to avoid retained Windows terminal handles after switching between readline and dashboard input.
+
+Live Jev inference and savings remain unverified without a TypeSafe key. The demo command is an optional simulation; start/plan/run use real Codex jobs.
+
 ## Current update: 0.3.0
 
 31 automated tests pass. Manual assignment is the default for new runs, with an explicit Auto mode. Tests cover approval before launch, serialized prompts under parallel scheduling, exact per-job assignment files, missing assignment refusal, resume selections, cancellation before worktree creation, picker controls, and small terminal layouts. The TypeSafe response contract was checked against the current official HTTP reference. Response bodies are now bounded while streaming, and cancellation is respected even without credentials. Full interactive manual demo completed in a Windows terminal with seven selected jobs. Terminal previews use simulated data. No TypeSafe key was configured: live Jev inference and routing quality remain unverified.

@@ -268,7 +268,7 @@ Four concurrent workers, 100 jobs per run, 15 minutes per job, and one transient
 
 Workers inherit applicable Codex configuration and integrations. Worktrees isolate edits but share Git metadata and machine resources. Ignored dependencies and environment files are not copied. Individually verified patches still need combined integration checks.
 
-No detached daemon, automatic subscription reset wait, or complete process recovery after a crash is implemented. Windows is tested; macOS/Linux are not yet validated. State defaults to `%LOCALAPPDATA%/CodexWorkflow` on Windows or `$XDG_STATE_HOME/codex-workflow` / `~/.local/state/codex-workflow` elsewhere; override with `--state-dir` or `CWF_STATE_DIR`.
+No detached daemon, automatic subscription reset wait, or complete process recovery after a crash is implemented. The automated suite passes on Windows, macOS, and Linux; real model pilots have been run on Windows. State defaults to `%LOCALAPPDATA%/CodexWorkflow` on Windows or `$XDG_STATE_HOME/codex-workflow` / `~/.local/state/codex-workflow` elsewhere; override with `--state-dir` or `CWF_STATE_DIR`.
 
 ## Development and evidence
 
