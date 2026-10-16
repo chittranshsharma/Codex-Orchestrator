@@ -6,7 +6,7 @@
 
 Script the mission. Route the models. Run the agents. Verify the patch.
 
-[![Version](https://img.shields.io/badge/version-0.4.0-a78bfa)](package.json)
+[![Version](https://img.shields.io/badge/version-0.5.0-a78bfa)](package.json)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522-84cc16)](https://nodejs.org/)
 [![MIT](https://img.shields.io/badge/license-MIT-60a5fa)](LICENSE)
 [![Codex SDK](https://img.shields.io/badge/built_with-Codex_SDK-f5a97f)](https://learn.chatgpt.com/docs/codex-sdk)
@@ -53,32 +53,57 @@ Requirements: **Node.js 22+**, **Git**, and Codex authentication with access to 
 Install the compiled public release directly:
 
 ```sh
-npm install -g https://github.com/chittranshsharma/Codex-Orchestrator/releases/download/v0.4.0/codex-workflow-0.4.0.tgz
+npm install -g https://github.com/chittranshsharma/Codex-Orchestrator/releases/download/v0.5.0/codex-workflow-0.5.0.tgz
 cwf doctor
 cd /path/to/your/project
 cwf
 ```
 
-You are now in the **real task launcher**:
+You are now in a **persistent coding chat**, with orchestration initially **OFF**. Give a prompt, read the answer, then give follow-ups in the same conversation:
 
-1. Describe your task, such as "Find and fix the bug that keeps expired sessions logged in."
-2. Choose **Manual** or **Auto**. Manual asks for the model and effort before each job, including planning.
-3. The planner writes a workflow. Read the displayed source and type **RUN** to launch it, or press Enter to save it for later.
-4. Watch the agents work, then read the printed result and saved report.
-5. If edits were prepared, review their patches and explicitly apply an independently verified edit.
+```text
+cwf [OFF] > Explain the authentication flow in this repository.
+cwf [OFF] > Where is session expiry checked?
+cwf [OFF] > /orchestrate on
+cwf [ON] > /agents manual
+cwf [ON] > Find and fix the expiry bug, then independently verify the fix.
+...review the generated workflow, type RUN, and select each worker...
+cwf [ON] > /orchestrate off
+cwf [OFF] > Explain the findings and which patches are still unapplied.
+```
 
-You can supply the prompt immediately:
+Switching modes preserves the same lead Codex thread. In OFF mode the lead handles your prompt directly and can edit the current checkout. In ON mode it plans from the same conversation, then delegates to isolated workflow jobs after you review and approve the generated JavaScript. Their results, run status, patch verification/application status and report paths are carried into the next follow-up. Long results are shortened with a link to the full local report. Manual/Auto controls worker assignment; `/model` controls the persistent lead.
+
+| Chat command | Action |
+| --- | --- |
+| `/orchestrate on` / `/orchestrate off` | Switch the next prompt's execution mode |
+| `/agents manual` / `/agents auto` | Choose worker assignment mode |
+| `/model MODEL [EFFORT]` | Set the lead model/effort while retaining its thread |
+| `/jev on` / `/jev off` | Toggle Jev for Auto workflow routing |
+| `/status` / `/history` / `/runs` | Inspect settings, recent transcript, or workflow IDs |
+| `/apply RUN_ID JOB_ID` | Apply a verified patch from a workflow in this chat |
+| `/exit` | Save and close |
+
+Ctrl+C cancels an active turn and returns to the prompt. Switch modes between turns; cancel first if a turn is still running. A trailing backslash continues input onto another line. Up/Down recalls previous user prompts. Settings, transcript, lead thread ID, pending workflow outcomes, and run links are saved locally under the state directory's `chats/` folder. One process may use a chat at a time. Resume from the same repository:
+
+```sh
+cwf chats
+cwf chat CHAT_ID
+```
+
+You can still use the guided **one-task** launcher:
 
 ```sh
 cwf start "Find and fix the expired-session bug" --manual
 ```
 
-The launcher makes real Codex calls and uses your account limits. It is a task/workflow launcher, not an interactive chat replacement. For follow-up conversation and everyday tasks, keep using `codex`. Nothing wraps or intercepts it.
+Both modes make real Codex calls and use your account limits. The separate `codex` command remains available. This chat uses the Codex SDK; it does not replace every native Codex CLI feature. Normal chat uses a workspace-write sandbox with shell network and web search disabled, no approval bypass, and no nested subagents. It inherits configured Codex integrations; their permissions remain their own.
 
 | You want to… | Type |
 | --- | --- |
 | Use normal Codex | `codex` |
-| Prompt a coordinated task | `cwf` or `cwf start "your task"` |
+| Chat with follow-ups and on/off orchestration | `cwf` or `cwf chat` |
+| Run one guided coordinated task | `cwf start "your task"` |
 | Run the built-in audit | `cwf run audit --target src --manual` |
 | Preview the UI without model calls | `cwf demo` (optional) |
 

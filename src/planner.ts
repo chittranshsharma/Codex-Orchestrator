@@ -4,6 +4,7 @@ Export default async function({ args, agent, pipeline, parallel, phase, log, rep
 Do not import modules, read files, run processes, access network APIs, or use process/global state in the script.
 The script coordinates agents. Agents perform repository reads, edits, and commands.
 agent(prompt, { id, role, label?, schema?, workspace?, timeoutMs?, webSearch? }) returns a JSON value with schema, or text otherwise.
+If supplying schema, its root must have type:'object'. For plain text omit schema. Wrap array or primitive values in an object property; never use a primitive or array root schema. Specify required properties and additionalProperties:false for structured objects.
 Every id must be unique, stable, and match /^[a-zA-Z0-9_-]{1,100}$/.
 Roles: plan for decomposition, scan for fast read-only inspection, edit for isolated edits, verify for independent read-only verification, review for final synthesis.
 Models and effort are assigned automatically from these roles by user configuration.

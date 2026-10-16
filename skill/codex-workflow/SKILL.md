@@ -7,7 +7,7 @@ description: "Plan, run, inspect, and resume scripted Codex workflows using the 
 
 Use the installed `codex-workflow` command (`cwf` is an alias). Run `codex-workflow --help` if the local CLI options are needed.
 
-For a human in an interactive terminal, `cwf` or `cwf start "task"` prompts for the task, mode, workflow review and execution. This is real Codex work. `demo` is only a simulation. In noninteractive command tools use the explicit plan/review/run flow below. Normal `codex` use remains independent and unaffected.
+For a human in an interactive terminal, `cwf` or `cwf chat` opens persistent coding chat. `/orchestrate on|off` switches between coordinated jobs and direct coding while retaining the lead thread. `/agents manual|auto` controls workers; `/model MODEL [EFFORT]` controls the lead. `/exit` saves; `cwf chats` lists sessions and `cwf chat CHAT_ID` resumes from the same repository. OFF can edit the current checkout; ON prepares isolated patches. `/apply RUN_ID JOB_ID` explicitly applies a verified patch belonging to that chat. For a single guided task use `cwf start "task"`. `demo` is only a simulation. In noninteractive command tools use the explicit plan/review/run flow below. Normal `codex` use remains independent and unaffected.
 
 Run commands from the intended Git repository, or specify `--repo` with its absolute path. Use `--plain` in Codex's command tools, or `--json` when parsing events. The interactive dashboard runs in a real terminal; it is not a native Codex panel.
 

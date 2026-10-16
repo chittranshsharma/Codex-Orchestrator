@@ -10,6 +10,7 @@ import { git, applyPatch } from '../dist/git.js';
 import { Store, hash, inside, runPath } from '../dist/storage.js';
 import { renderDashboard, clean } from '../dist/dashboard.js';
 import { demoState } from '../dist/demo.js';
+import { applyChatPatch } from '../dist/chat-ui.js';
 
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'cwf-test-'));
@@ -197,6 +198,20 @@ test('edits are isolated and apply requires passing independent verification', a
   await assert.rejects(applyPatch(store, 'edit'), /already been applied/);
 });
 
+test('in-chat application enforces chat ownership, repository identity and the verifier gate', async t => {
+  const { repo, root, store } = await setup(t, `await agent('edit',{id:'edit',role:'edit'});await agent('verify',{id:'verify',role:'verify',workspace:'edit'});await acceptPatch('edit','verify');`);
+  await new Runtime(store, provider(async r => {
+    if (r.options.role === 'edit') { await writeFile(join(r.cwd, 'value.txt'), 'fixed\n'); return 'edited'; }
+    return { passed: true };
+  })).run();
+  const stateRoot = join(root,'state'), id = store.state.id;
+  await assert.rejects(applyChatPatch(stateRoot, {repo,runs:[]}, id, 'edit'), /belong to this chat/);
+  await assert.rejects(applyChatPatch(stateRoot, {repo:join(root,'wrong'),runs:[id]}, id, 'edit'), /another repository/);
+  assert.equal(await readFile(join(repo,'value.txt'),'utf8'), 'original\n');
+  assert.match(await applyChatPatch(stateRoot, {repo,runs:[id]}, id, 'edit'), /Applied verified patch/);
+  assert.equal(await readFile(join(repo,'value.txt'),'utf8'), 'fixed\n');
+});
+
 test('unverified, tampered and conflicting patches do not change the main checkout', async t => {
   const { repo, store } = await setup(t, `return agent('edit',{id:'edit',role:'edit'});`);
   await new Runtime(store, provider(async request => { await writeFile(join(request.cwd, 'value.txt'), 'fixed\n'); return 'edited'; })).run();
@@ -258,6 +273,12 @@ test('reserved object keys cannot be used as job IDs', async t => {
   const { store } = await setup(t, `return agent('job',{id:'__proto__',role:'scan'});`);
   const p = provider(); await assert.rejects(new Runtime(store, p).run(), /prototype keys/);
   assert.equal(p.calls.length, 0); assert.equal(Object.keys(store.state.tasks).length, 0);
+});
+
+test('unsupported structured-output roots fail locally before any model call', async t => {
+  const { store } = await setup(t, `return agent('text',{id:'text',role:'scan',schema:{type:'string'}});`);
+  const p = provider(); await assert.rejects(new Runtime(store, p).run(), /root object schema/);
+  assert.equal(p.calls.length, 0);
 });
 
 test('dashboard stays within terminal dimensions and strips terminal control input', () => {

@@ -18,7 +18,7 @@ const run = (args, cwd) => exec(process.execPath, [cli, ...args], { cwd, windows
 test('CLI help, version, configuration creation and safe overwrite refusal work without model calls', async t => {
   const cwd = await temporary(t);
   assert.match((await run(['--help'], cwd)).stdout, /automatic role-based model routing/);
-  assert.equal((await run(['--version'], cwd)).stdout.trim(), '0.4.0');
+  assert.equal((await run(['--version'], cwd)).stdout.trim(), '0.5.0');
   await run(['init', '--model', 'scan=custom-model', '--concurrency', '2', '--jev'], cwd);
   const config = JSON.parse(await readFile(join(cwd, '.codex-workflow.json'), 'utf8'));
   assert.equal(config.roles.scan.model, 'custom-model'); assert.equal(config.concurrency, 2);
@@ -38,4 +38,6 @@ test('CLI validates malformed overrides and supports machine-readable empty run 
   await assert.rejects(run(['demo', '--manual', '--auto'], cwd), error => error.stderr.includes('Choose --manual or --auto'));
   await assert.rejects(run(['demo', '--auto', '--agents-file', 'agents.json'], cwd), error => error.stderr.includes('requires manual mode'));
   await assert.rejects(run(['start', 'fix a bug'], cwd), error => error.stderr.includes('interactive terminal'));
+  await assert.rejects(run(['chat'], cwd), error => error.stderr.includes('interactive terminal'));
+  assert.deepEqual(JSON.parse((await run(['chats', '--state-dir', join(cwd, 'state'), '--json'], cwd)).stdout), []);
 });

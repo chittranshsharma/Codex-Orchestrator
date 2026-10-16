@@ -1,5 +1,13 @@
 # Verification — Codex Workflow 0.1.0
 
+## Current release: 0.5.0
+
+40 automated tests pass locally. New coverage includes persistent chat thread reuse, follow-ups across ON/OFF transitions, saved-session resumption, queued workflow outcome context, chat ownership locks, cancellation, concurrent-turn rejection, malformed plans, and in-chat patch ownership/repository checks. Existing independent-verifier and conflict gates remain in force. Unsupported primitive structured-output roots are now rejected locally before a model call, and planner instructions specify object roots or plain text.
+
+A real Windows terminal chat (`chat-0c56f082-be8f-4490-b11f-c02069e571d3`) used the same Codex thread (`01a14455-017f-7d32-b4cd-2ab89c71672c`) for direct prompts, follow-up recall, read-only workflow planning, switching back to direct chat, and resumption after closing the terminal. A worker in run `20261016105411-f07b3284` returned the remembered codeword. After resuming the chat, the lead recalled the original word and correctly reported that the latest workflow completed. The preceding failed primitive-schema run remained visible rather than being presented as successful. Terminal mode toggles and exit were also exercised after resuming.
+
+OFF mode uses workspace-write in the current checkout; ON mode uses a read-only planning turn followed by the existing isolated workflow runtime. The lead receives recorded workflow outcomes and report paths for follow-ups; long results are explicitly shortened. Jev live inference remains unverified without credentials.
+
 ## Current release: 0.4.0
 
 33 automated tests pass locally. The GitHub matrix also passed on Windows (Node 22 and 24), Ubuntu (Node 22), and macOS (Node 22): workflow run `38884621621`. These are controlled runtime tests; real account-backed model pilots remain Windows-only.

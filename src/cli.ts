@@ -9,6 +9,8 @@ import { emitKeypressEvents } from 'node:readline';
 import { createInterface } from 'node:readline/promises';
 import { AgentPicker } from './selection.js';
 import { reviewAndLaunch } from './guided.js';
+import { runChat } from './chat-ui.js';
+import { listChats } from './chat.js';
 import { defaultConfig, loadConfig } from './config.js';
 import { Runtime, createRun, resumeRun, writeReport } from './runtime.js';
 import { Store, stateRoot, runPath, readState } from './storage.js';
@@ -23,10 +25,12 @@ import type { Provider, Role, Effort } from './types.js';
 const exec = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const help = `Codex Orchestrator 0.4.0
+const help = `Codex Orchestrator 0.5.0
 Scripted workflows, automatic role-based model routing, isolated edits, live telemetry.
 
-  cwf                                        Open the guided task launcher in a terminal
+  cwf                                        Open persistent chat; orchestration starts off
+  cwf chat [CHAT_ID]                          Start or resume a chat with follow-ups
+  cwf chats                                  List saved chats
   cwf start "your task"                       Plan, review, then launch real Codex jobs
   codex-workflow init                         Create a repository model/routing config
   codex-workflow doctor [--live]              Check install/login; optionally probe models
@@ -63,6 +67,7 @@ Common options:
   --manual         Choose model and effort before every job (default)
   --auto           Explicitly allow automatic role/Jev assignment
   --agents-file F  JSON map of exact job IDs to {model,effort} for manual runs
+  --orchestrate    Start a new chat with orchestration on
 
 Scripts are trusted local JavaScript. Read generated scripts before running them.
 Worktrees and patches stay isolated until you explicitly use apply.
@@ -73,6 +78,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'V' },
     jev: { type: 'boolean' }, 'no-jev': { type: 'boolean' },
     manual: { type: 'boolean' }, auto: { type: 'boolean' }, 'agents-file': { type: 'string' },
+    orchestrate: { type: 'boolean' },
     repo: { type: 'string' }, 'state-dir': { type: 'string' }, plain: { type: 'boolean' }, json: { type: 'boolean' }, tui: { type: 'boolean' },
     args: { type: 'string' }, 'args-file': { type: 'string' }, target: { type: 'string', multiple: true },
     fix: { type: 'boolean' }, question: { type: 'string' }, concurrency: { type: 'string' }, 'max-agents': { type: 'string' },
@@ -80,20 +86,26 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     out: { type: 'string' }, task: { type: 'string' }, script: { type: 'boolean' }, live: { type: 'boolean' }, snapshot: { type: 'boolean' },
   } });
   let [command, subject] = positionals;
-  if (!command && !values.help && process.stdin.isTTY && process.stdout.isTTY) command = 'start';
-  if (values.version) { console.log('0.4.0'); return; }
+  if (!command && !values.help && process.stdin.isTTY && process.stdout.isTTY) command = 'chat';
+  if (values.version) { console.log('0.5.0'); return; }
   if (values.manual && values.auto) throw new Error('Choose --manual or --auto');
   if (values.auto && values['agents-file']) throw new Error('--agents-file requires manual mode');
   if (values.jev && values['no-jev']) throw new Error('Choose --jev or --no-jev');
   if (values.help || !command) { console.log(help); return; }
   const root = resolve(values['state-dir'] ?? stateRoot());
   const output = (value: unknown) => console.log(values.json ? JSON.stringify(value) : typeof value === 'string' ? value.split('\n').map(line => clean(line)).join('\n') : JSON.stringify(value, null, 2));
-  if (!['start', 'init', 'doctor', 'plan', 'run', 'list', 'show', 'watch', 'resume', 'save', 'apply', 'demo', 'install-skill'].includes(command)) throw new Error(`Unknown command: ${command}. Use --help.`);
+  if (!['chat', 'chats', 'start', 'init', 'doctor', 'plan', 'run', 'list', 'show', 'watch', 'resume', 'save', 'apply', 'demo', 'install-skill'].includes(command)) throw new Error(`Unknown command: ${command}. Use --help.`);
   if (!['plan', 'start'].includes(command) && positionals.length > 2) throw new Error('Unexpected positional arguments. Use --help.');
   if (command === 'start' && (!process.stdin.isTTY || !process.stdout.isTTY || values.plain || values.json)) throw new Error('start needs an interactive terminal. In command tools use plan "task" --out task.mjs, inspect it, then run task.mjs with explicit assignments or --auto.');
   if ([values.plain, values.json, values.tui].filter(Boolean).length > 1) throw new Error('Choose only one of --plain, --json, --tui');
   if (values.tui && (!process.stdout.isTTY || !process.stdin.isTTY)) throw new Error('--tui needs an interactive terminal. Use --plain or --json here.');
   const mode = values.json ? 'json' : values.plain || !process.stdout.isTTY || !process.stdin.isTTY ? 'plain' : 'tui';
+  if (command === 'chat' && mode !== 'tui') throw new Error('chat needs an interactive terminal. Use run/plan with --plain or --json in command tools.');
+  if (command === 'chats') {
+    const chats = await listChats(root);
+    output(values.json ? chats.map(c => ({ id: c.id, repo: c.repo, updatedAt: c.updatedAt, orchestrate: c.orchestrate, messages: c.messages.length })) : chats.map(c => `${c.id}  ${c.orchestrate ? 'ON' : 'OFF'}  ${c.messages.length} messages  ${c.repo}`).join('\n') || 'No saved chats');
+    return;
+  }
   if (command === 'install-skill') {
     const skillHome = join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'skills');
     const destination = join(skillHome, 'codex-workflow');
@@ -201,6 +213,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     output(checks); return;
   }
   const repo = await repository(repoPath);
+  if (command === 'chat') {
+    if (subject && (values.orchestrate || values.auto || values.manual || values.jev || values['no-jev'] || values['agents-file'] || values.model || values.effort)) throw new Error('Resume a chat with its saved settings, then use /orchestrate, /agents, /model or /jev to change them.');
+    await runChat(root, repo, config, execute, subject, values.orchestrate); return;
+  }
   let guidedRequest = positionals.slice(1).join(' ');
   if (command === 'start' && !guidedRequest) {
     console.log('\nCODEX ORCHESTRATOR / REAL TASK\nDescribe a task for this repository. Use codex separately for ordinary chat.');
@@ -270,13 +286,15 @@ async function question(prompt: string): Promise<string> {
   try { return await input.question(prompt); } finally { input.close(); }
 }
 
-async function execute(store: Store, provider: Provider, mode: 'tui' | 'plain' | 'json', demo = false): Promise<void> {
+async function execute(store: Store, provider: Provider, mode: 'tui' | 'plain' | 'json', demo = false, signal?: AbortSignal): Promise<void> {
   const picker = mode === 'tui' ? new AgentPicker() : undefined;
   const runtime = new Runtime(store, provider, undefined, picker?.select); const detach = attachDashboard(runtime, mode, demo, picker);
   const onStop = () => runtime.stop(); process.on('SIGINT', onStop); process.on('SIGTERM', onStop);
+  if (signal?.aborted) runtime.stop();
+  signal?.addEventListener('abort', onStop, { once: true });
   let error: unknown;
   try { await runtime.run(); } catch (caught) { error = caught; }
-  finally { detach(); process.off('SIGINT', onStop); process.off('SIGTERM', onStop); }
+  finally { detach(); process.off('SIGINT', onStop); process.off('SIGTERM', onStop); signal?.removeEventListener('abort', onStop); }
   const report = await writeReport(store);
   const result = { type: 'summary', run: store.state.id, status: store.state.status, report, ...(demo ? { simulation: true } : {}) };
   console.log(mode === 'json' ? JSON.stringify(result) : `\nRun ${store.state.id}: ${store.state.status}\nReport: ${report}\nInspect: codex-workflow show ${store.state.id}`);

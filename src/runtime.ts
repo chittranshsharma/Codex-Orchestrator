@@ -102,7 +102,10 @@ export class Runtime extends EventEmitter {
     if (!roles.includes(options.role)) throw new Error(`Unknown agent role: ${options.role}`);
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > this.state.config.maxInputChars) throw new Error('Agent prompt is empty or exceeds maxInputChars');
     if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1000 || options.timeoutMs > this.state.config.timeoutMs)) throw new Error('Agent timeout must be between 1000 and the configured timeoutMs');
-    if (options.schema) new Ajv({ strict: false }).compile(options.schema);
+    if (options.schema) {
+      if (options.schema.type !== 'object') throw new Error('Codex structured output requires a root object schema. Omit schema for text, or wrap the result in an object.');
+      new Ajv({ strict: false }).compile(options.schema);
+    }
     if (this.claimed.has(options.id)) throw new Error(`Duplicate agent id in one execution: ${options.id}`);
     this.claimed.add(options.id);
     let profile = this.state.config.roles[options.role];

@@ -35,13 +35,28 @@ export class Store {
   private unlock?: () => Promise<void>;
   constructor(readonly directory: string, readonly state: RunState) {}
   async lock(): Promise<void> {
-    await mkdir(this.directory, { recursive: true });
-    const path = join(this.directory, 'run.lock');
+    this.unlock = await acquireLock(this.directory);
+  }
+  save(): Promise<void> {
+    const snapshot = structuredClone(this.state);
+    this.queue = this.queue.then(() => atomicJson(join(this.directory, 'state.json'), snapshot));
+    return this.queue;
+  }
+  event(type: string, data: Record<string, unknown> = {}): Promise<void> {
+    const entry = JSON.stringify({ at: new Date().toISOString(), type, ...data }) + '\n';
+    this.queue = this.queue.then(() => appendFile(join(this.directory, 'events.jsonl'), entry, { mode: 0o600 }));
+    return this.queue;
+  }
+  async close(): Promise<void> { try { await this.queue; } finally { await this.unlock?.(); this.unlock = undefined; } }
+}
+export async function acquireLock(directory: string, filename = 'run.lock'): Promise<() => Promise<void>> {
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, filename);
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const file = await open(path, 'wx', 0o600);
         await file.writeFile(String(process.pid)); await file.close();
-        this.unlock = () => unlink(path); return;
+        return () => unlink(path);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
         const pid = Number(await readFile(path, 'utf8'));
@@ -55,18 +70,6 @@ export class Store {
       }
     }
     throw new Error('Could not acquire run lock');
-  }
-  save(): Promise<void> {
-    const snapshot = structuredClone(this.state);
-    this.queue = this.queue.then(() => atomicJson(join(this.directory, 'state.json'), snapshot));
-    return this.queue;
-  }
-  event(type: string, data: Record<string, unknown> = {}): Promise<void> {
-    const entry = JSON.stringify({ at: new Date().toISOString(), type, ...data }) + '\n';
-    this.queue = this.queue.then(() => appendFile(join(this.directory, 'events.jsonl'), entry, { mode: 0o600 }));
-    return this.queue;
-  }
-  async close(): Promise<void> { try { await this.queue; } finally { await this.unlock?.(); this.unlock = undefined; } }
 }
 export async function readState(directory: string): Promise<RunState> {
   const state = JSON.parse(await readFile(join(directory, 'state.json'), 'utf8')) as RunState;

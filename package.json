@@ -1,6 +1,6 @@
 {
   "name": "codex-workflow",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Scripted Codex workflows with model routing, checkpoints, isolated edits, and a live terminal dashboard",
   "repository": { "type": "git", "url": "git+https://github.com/chittranshsharma/Codex-Orchestrator.git" },
   "homepage": "https://github.com/chittranshsharma/Codex-Orchestrator#readme",
