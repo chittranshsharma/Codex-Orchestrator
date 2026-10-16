@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createJudge } from '../dist/jev.js';
 import { defaultConfig } from '../dist/config.js';
 import reviewWorkflow from '../workflows/jev-review.mjs';
-const config = { ...defaultConfig.jev, enabled: true };
+import auditWorkflow from '../workflows/audit.mjs';
+const config = { ...defaultConfig.jev, enabled: true, shareTaskText: true };
 const options = { id: 'decision', instructions: 'Which?', choices: { fast: 'Simple', deep: 'Complex' }, fallback: 'deep' };
 const body = (p = 0.95) => ({ model: 'jev-test', answers: { decision: { type: 'choice', choice: 'fast', confidence: 2 * p - 1,
   probabilities: { fast: p, deep: 1 - p } } }, usage: { input_tokens: 30, output_tokens: 5 } });
@@ -58,4 +59,38 @@ test('Jev stops reading oversized responses and obeys cancellation even without 
   assert.equal(cancelled, true); assert.match(result.error, /exceeds limit/);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(createJudge(config, fetch, '')({}, options, controller.signal));
+});
+
+test('metadata routing strips task text, caches identical judgments and blocks semantic disclosure by default', async () => {
+  let calls = 0, payload;
+  const judge = createJudge({ ...config, shareTaskText: false }, async (_url, init) => {
+    calls++; payload = JSON.parse(init.body); return new Response(JSON.stringify(body()));
+  }, 'fixture-only-key');
+  const signal = new AbortController().signal;
+  const state = { role: 'scan', promptChars: 80, task: 'PRIVATE SOURCE', label: 'PRIVATE PATH' };
+  const first = await judge(state, { ...options, id: 'route-one' }, signal);
+  assert.equal(first.fallback, false);
+  assert.ok(!JSON.stringify(payload).includes('PRIVATE'));
+  const second = await judge(state, { ...options, id: 'route-two' }, signal);
+  assert.equal(calls, 1); assert.equal(second.cached, true); assert.equal(second.usage.input_tokens, 0);
+  const blocked = await judge({ source: 'PRIVATE' }, options, signal);
+  assert.equal(calls, 1); assert.match(blocked.error, /sharing is off/);
+});
+
+test('service failure disables further hosted calls for the run', async () => {
+  let calls = 0;
+  const judge = createJudge(config, async () => { calls++; return new Response('', { status: 503 }); }, 'fixture-only-key');
+  await judge({ task: 'one' }, options, new AbortController().signal);
+  const next = await judge({ task: 'two' }, options, new AbortController().signal);
+  assert.equal(calls, 1); assert.match(next.error, /unavailable for this run/);
+});
+
+test('a clean audit assembles its report without a redundant synthesis model call', async () => {
+  const calls = [];
+  const result = await auditWorkflow({ args: { targets: ['src'] }, phase() {}, log() {},
+    pipeline: async (items, run) => Promise.all(items.map(run)),
+    agent: async (_prompt, options) => { calls.push(options); return { findings: [] }; },
+  });
+  assert.equal(calls.length, 1); assert.equal(calls[0].role, 'scan');
+  assert.match(result.summary, /0 confirmed/);
 });

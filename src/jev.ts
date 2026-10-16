@@ -1,17 +1,30 @@
 import type { JevConfig, Judgment } from './types.js';
+import { jevKey } from './environment.js';
+import { hash, stable } from './storage.js';
 
 export interface DecisionOptions {
   id: string; instructions: string; choices: Record<string, string>; fallback: string;
 }
 export type Judge = (state: unknown, options: DecisionOptions, signal: AbortSignal) => Promise<Judgment>;
 
-export function createJudge(config: JevConfig, fetcher: typeof fetch = fetch, apiKey = process.env.TYPESAFE_API_KEY): Judge {
-  return async (state, options, signal) => {
+export function createJudge(config: JevConfig, fetcher: typeof fetch = fetch, apiKey = jevKey()): Judge {
+  const cache = new Map<string, Promise<Judgment>>();
+  let unavailable = false;
+  const request: Judge = async (state, options, signal) => {
     signal.throwIfAborted();
     const fallback = (error: string): Judgment => ({ choice: options.fallback, confidence: 0, probabilities: {},
       model: config.model, fallback: true, error, usage: { input_tokens: 0, output_tokens: 0 } });
     if (!config.enabled) return fallback('Jev disabled');
     if (!apiKey) return fallback('TYPESAFE_API_KEY is not configured');
+    if (unavailable) return fallback('Jev unavailable for this run; local routing active');
+    if (!config.shareTaskText && !options.id.startsWith('route-')) return fallback('Task text sharing is off; semantic decision uses its explicit fallback');
+    if (!config.shareTaskText) {
+      const data = state as Record<string, unknown> | null;
+      state = { role: ['plan', 'scan', 'edit', 'verify', 'review'].includes(String(data?.role)) ? data?.role : 'scan',
+        promptChars: typeof data?.promptChars === 'number' ? Math.max(0, Math.min(1000000, data.promptChars)) : 0,
+        structuredOutput: data?.structuredOutput === true, existingWorkspace: data?.existingWorkspace === true, complex: data?.complex === true };
+    }
+    if (JSON.stringify(state ?? null).length > 8000) return fallback('Jev state exceeds the 8000-character disclosure limit');
     try {
       const response = await fetcher('https://api.typesafe.ai/v1/systemone', {
         method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(config.timeoutMs)]),
@@ -21,7 +34,7 @@ export function createJudge(config: JevConfig, fetcher: typeof fetch = fetch, ap
         } } }),
       });
       // Do not persist service error bodies, which could echo input or credentials.
-      if (!response.ok) return fallback(`TypeSafe HTTP ${response.status}`);
+      if (!response.ok) { unavailable = true; return fallback(`TypeSafe HTTP ${response.status}`); }
       if (!response.body) return fallback('Empty TypeSafe response');
       const reader = response.body.getReader();
       let size = 0; const chunks: Uint8Array[] = [];
@@ -55,7 +68,20 @@ export function createJudge(config: JevConfig, fetcher: typeof fetch = fetch, ap
         model: body.model, fallback: uncertain, ...(uncertain ? { error: 'Below routing confidence threshold' } : {}), usage: body.usage };
     } catch {
       signal.throwIfAborted();
+      unavailable = true;
       return fallback('TypeSafe request failed or timed out');
     }
+  };
+  return async (state, options, signal) => {
+    signal.throwIfAborted();
+    const key = hash(stable({ state, instructions: options.instructions, choices: options.choices, fallback: options.fallback }));
+    const saved = cache.get(key);
+    if (saved) {
+      const result = await saved; signal.throwIfAborted();
+      return { ...structuredClone(result), cached: true, usage: { input_tokens: 0, output_tokens: 0 } };
+    }
+    const pending = request(state, options, signal);
+    cache.set(key, pending);
+    try { return await pending; } catch (error) { cache.delete(key); throw error; }
   };
 }

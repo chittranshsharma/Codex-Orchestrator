@@ -5,14 +5,19 @@ export type JsonSchema = Record<string, unknown>;
 export interface ModelProfile { model: string; effort: Effort }
 export interface JevConfig {
   enabled: boolean; model: string; confidence: number; timeoutMs: number;
+  shareTaskText?: boolean;
   profiles: { fast: ModelProfile; standard: ModelProfile; deep: ModelProfile };
 }
 export interface Judgment {
   choice: string; confidence: number; probabilities: Record<string, number>;
   model: string; fallback: boolean; error?: string; usage: { input_tokens: number; output_tokens: number };
+  cached?: boolean;
 }
 export interface Config {
   selectionMode?: 'manual' | 'auto';
+  fixedRoles?: Role[];
+  localRouting?: boolean;
+  tokenBudget?: number;
   assignments?: Record<string, ModelProfile>;
   roles: Record<Role, ModelProfile>;
   concurrency: number; maxAgents: number; timeoutMs: number; readRetries: number;
@@ -21,6 +26,7 @@ export interface Config {
 }
 export interface AgentOptions {
   id: string; role: Role; label?: string; schema?: JsonSchema;
+  model?: string; effort?: Effort;
   timeoutMs?: number;
   workspace?: string;
   webSearch?: 'disabled' | 'cached' | 'live';

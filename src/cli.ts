@@ -22,15 +22,20 @@ import { authoringReference, plannerWorkflow } from './planner.js';
 import { roles } from './types.js';
 import { createJudge } from './jev.js';
 import type { Provider, Role, Effort } from './types.js';
+import { jevEnvPath, jevKey, loadJevEnv, setupJevEnv } from './environment.js';
+import { premiumWarning } from './policy.js';
 const exec = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const help = `Codex Orchestrator 0.5.1
+const help = `Codex Orchestrator 0.6.0
 Scripted workflows, automatic role-based model routing, isolated edits, live telemetry.
 
   cwf                                        Open persistent chat; orchestration starts off
   cwf chat [CHAT_ID]                          Start or resume a chat with follow-ups
   cwf chats                                  List saved chats
+  cwf jev setup                              Create the local Jev env file and show its location
+  cwf jev status                             Show credential and disclosure status
+  cwf jev probe                              Test hosted Jev with synthetic metadata
   cwf start "your task"                       Plan, review, then launch real Codex jobs
   codex-workflow init                         Create a repository model/routing config
   codex-workflow doctor [--live]              Check install/login; optionally probe models
@@ -58,14 +63,17 @@ Common options:
   --args JSON       Workflow input object
   --target PATH     Audit target, repeatable
   --question TEXT   Audit focus
-  --concurrency N   Maximum active agents, default 4
-  --max-agents N    Maximum total jobs per run, default 100
+  --concurrency N   Maximum active agents, default 2
+  --max-agents N    Maximum total jobs per run, default 16
+  --token-budget N Stop scheduling after N reported input+output tokens (default 100000)
+  --env-file PATH  Read only TYPESAFE_API_KEY from this env file
+  --jev-task-text  Opt in to sharing task text with hosted Jev
   --model ROLE=ID   Override a role's model, repeatable
   --effort ROLE=N   Override a role's reasoning effort, repeatable
   --jev            Enable Jev decisions and per-job model routing
   --no-jev         Use fixed role profiles for this run
-  --manual         Choose model and effort before every job (default)
-  --auto           Explicitly allow automatic role/Jev assignment
+  --manual         Choose model and effort before every job
+  --auto           Use automatic assignment (default); explicit models take priority
   --agents-file F  JSON map of exact job IDs to {model,effort} for manual runs
   --orchestrate    Start a new chat with orchestration on
 
@@ -79,6 +87,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     jev: { type: 'boolean' }, 'no-jev': { type: 'boolean' },
     manual: { type: 'boolean' }, auto: { type: 'boolean' }, 'agents-file': { type: 'string' },
     orchestrate: { type: 'boolean' },
+    'env-file': { type: 'string' }, 'jev-task-text': { type: 'boolean' }, 'token-budget': { type: 'string' }, update: { type: 'boolean' },
     repo: { type: 'string' }, 'state-dir': { type: 'string' }, plain: { type: 'boolean' }, json: { type: 'boolean' }, tui: { type: 'boolean' },
     args: { type: 'string' }, 'args-file': { type: 'string' }, target: { type: 'string', multiple: true },
     fix: { type: 'boolean' }, question: { type: 'string' }, concurrency: { type: 'string' }, 'max-agents': { type: 'string' },
@@ -87,14 +96,15 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   } });
   let [command, subject] = positionals;
   if (!command && !values.help && process.stdin.isTTY && process.stdout.isTTY) command = 'chat';
-  if (values.version) { console.log('0.5.1'); return; }
+  if (values.version) { console.log('0.6.0'); return; }
   if (values.manual && values.auto) throw new Error('Choose --manual or --auto');
   if (values.auto && values['agents-file']) throw new Error('--agents-file requires manual mode');
   if (values.jev && values['no-jev']) throw new Error('Choose --jev or --no-jev');
   if (values.help || !command) { console.log(help); return; }
   const root = resolve(values['state-dir'] ?? stateRoot());
+  await loadJevEnv(root, values['env-file'] ?? process.env.CWF_ENV_FILE);
   const output = (value: unknown) => console.log(values.json ? JSON.stringify(value) : typeof value === 'string' ? value.split('\n').map(line => clean(line)).join('\n') : JSON.stringify(value, null, 2));
-  if (!['chat', 'chats', 'start', 'init', 'doctor', 'plan', 'run', 'list', 'show', 'watch', 'resume', 'save', 'apply', 'demo', 'install-skill'].includes(command)) throw new Error(`Unknown command: ${command}. Use --help.`);
+  if (!['jev', 'chat', 'chats', 'start', 'init', 'doctor', 'plan', 'run', 'list', 'show', 'watch', 'resume', 'save', 'apply', 'demo', 'install-skill'].includes(command)) throw new Error(`Unknown command: ${command}. Use --help.`);
   if (!['plan', 'start'].includes(command) && positionals.length > 2) throw new Error('Unexpected positional arguments. Use --help.');
   if (command === 'start' && (!process.stdin.isTTY || !process.stdout.isTTY || values.plain || values.json)) throw new Error('start needs an interactive terminal. In command tools use plan "task" --out task.mjs, inspect it, then run task.mjs with explicit assignments or --auto.');
   if ([values.plain, values.json, values.tui].filter(Boolean).length > 1) throw new Error('Choose only one of --plain, --json, --tui');
@@ -106,13 +116,28 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     output(values.json ? chats.map(c => ({ id: c.id, repo: c.repo, updatedAt: c.updatedAt, orchestrate: c.orchestrate, messages: c.messages.length })) : chats.map(c => `${c.id}  ${c.orchestrate ? 'ON' : 'OFF'}  ${c.messages.length} messages  ${c.repo}`).join('\n') || 'No saved chats');
     return;
   }
+  if (command === 'jev') {
+    if (subject === 'setup') {
+      output(`Jev env file: ${await setupJevEnv(root)}\nAdd TYPESAFE_API_KEY=your_key there using your editor. It is read automatically by cwf; existing files are preserved.\nOr pass --env-file PATH on any cwf command. Only TYPESAFE_API_KEY is read; values are never printed.\nJev is optional, off by default, and hosted by TypeSafe. Default routing sends metadata, not source code or task text.`);
+    } else if (!subject || subject === 'status') output({ keyConfigured: Boolean(jevKey()), envFile: values['env-file'] ?? process.env.CWF_ENV_FILE ?? jevEnvPath(root), hosted: 'api.typesafe.ai', defaultDisclosure: 'role, prompt length, structured-output/workspace flags, local complexity flag', taskText: 'off unless explicitly enabled', enabledByDefault: false });
+    else if (subject === 'probe') {
+      output('Hosted TypeSafe probe: sending synthetic routing metadata only; no project code. This tests connectivity, not routing quality or token savings.');
+      const result = await createJudge({ ...defaultConfig.jev!, enabled: true })({ role: 'scan', promptChars: 80, structuredOutput: false, existingWorkspace: false, complex: false }, { id: 'route-probe', instructions: 'Choose a tier for bounded inspection from this metadata. Use role if uncertain.', choices: { fast: 'Simple bounded inspection', role: 'Insufficient evidence' }, fallback: 'role' }, AbortSignal.timeout(10000));
+      output(result); if (result.fallback) process.exitCode = 2;
+    } else throw new Error('Usage: cwf jev setup|status|probe');
+    return;
+  }
   if (command === 'install-skill') {
     const skillHome = join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'skills');
     const destination = join(skillHome, 'codex-workflow');
-    try { await lstat(destination); throw new Error(`Skill already exists at ${destination}; inspect it before replacing it`); }
+    try { await lstat(destination); if (!values.update) throw new Error(`Skill already exists at ${destination}; use install-skill --update to update this skill`);
+      const old = await readFile(join(destination, 'SKILL.md'), 'utf8');
+      if (!old.includes('name: codex-workflow')) throw new Error('Destination is not the Codex Workflow skill');
+      await writeFile(join(destination, 'SKILL.md.previous'), old, { mode: 0o600 });
+    }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     await mkdir(skillHome, { recursive: true });
-    await cp(join(packageRoot, 'skill', 'codex-workflow'), destination, { recursive: true, errorOnExist: true, force: false });
+    await cp(join(packageRoot, 'skill', 'codex-workflow'), destination, { recursive: true, errorOnExist: !values.update, force: Boolean(values.update) });
     output(`Installed ${destination}. Start a new Codex chat or reload skills to discover $codex-workflow.`); return;
   }
   if (command === 'list') {
@@ -146,7 +171,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'watch') { await watch(store, mode); return; }
-    if (values.manual || values.auto || values['agents-file'] || values.jev || values['no-jev'] || values.model || values.effort || values.concurrency || values['max-agents'] || values.args || values['args-file'] || values.fix || values.target || values.question) throw new Error('Resume uses the original script, args and model settings. Start a new run to change them.');
+    if (values.manual || values.auto || values['agents-file'] || values.jev || values['no-jev'] || values['jev-task-text'] || values['token-budget'] || values.model || values.effort || values.concurrency || values['max-agents'] || values.args || values['args-file'] || values.fix || values.target || values.question) throw new Error('Resume uses the original script, args and model settings. Start a new run to change them.');
     await execute(store, new CodexProvider(store.state.config), mode); return;
   }
   if (command === 'demo') {
@@ -164,18 +189,22 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (values.manual || values.auto || values['agents-file']) config.selectionMode = values.auto ? 'auto' : 'manual';
   if (values['agents-file']) config.assignments = JSON.parse(await readFile(resolve(values['agents-file']), 'utf8'));
   if (values.jev || values['no-jev']) config.jev!.enabled = Boolean(values.jev);
+  if (values['jev-task-text']) { config.jev!.enabled = true; config.jev!.shareTaskText = true; }
   for (const override of values.model ?? []) {
     const index = override.indexOf('='); const role = override.slice(0, index) as Role;
     if (index < 1 || !roles.includes(role)) throw new Error('--model must be ROLE=MODEL');
     config.roles[role].model = override.slice(index + 1);
+    config.fixedRoles = [...new Set([...(config.fixedRoles ?? []), role])];
   }
   for (const override of values.effort ?? []) {
     const [role, effort] = override.split('=') as [Role, Effort];
     if (!roles.includes(role)) throw new Error('--effort must be ROLE=EFFORT');
     config.roles[role].effort = effort;
+    config.fixedRoles = [...new Set([...(config.fixedRoles ?? []), role])];
   }
   if (values.concurrency) config.concurrency = Number(values.concurrency);
   if (values['max-agents']) config.maxAgents = Number(values['max-agents']);
+  if (values['token-budget']) config.tokenBudget = Number(values['token-budget']);
   config = await loadConfig(repoPath, config);
   if (command === 'init') {
     const path = join(repoPath, '.codex-workflow.json'); await writeFile(path, JSON.stringify(config, null, 2) + '\n', { flag: 'wx' });
@@ -184,7 +213,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (command === 'doctor') {
     const binary = config.codexPath ?? 'codex';
     const checks: Record<string, unknown> = { node: process.version, stateDirectory: root, routing: config.roles };
-    checks.jev = { enabled: config.jev?.enabled ?? false, model: config.jev?.model, keyConfigured: Boolean(process.env.TYPESAFE_API_KEY) };
+    checks.jev = { enabled: config.jev?.enabled ?? false, model: config.jev?.model, keyConfigured: Boolean(jevKey()), envFile: values['env-file'] ?? jevEnvPath(root), shareTaskText: config.jev?.shareTaskText ?? false };
     for (const [name, args] of [['git', ['--version']], [binary, ['--version']], [binary, ['login', 'status']]] as const) {
       const label = name === 'git' ? 'git' : args.length === 1 ? 'installedCodexCLI' : 'login';
       try { const result = await exec(name, [...args], { windowsHide: true }); checks[label] = (result.stdout + result.stderr).trim(); }
@@ -192,8 +221,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     }
     if (values.live) {
       if (config.jev?.enabled) {
-        const judgment = await createJudge(config.jev)({ task: 'Read one known file and report its exported function names' }, {
-          id: 'jev-probe', instructions: 'Does this task require simple inspection or complex reasoning?',
+        const judgment = await createJudge(config.jev)({ role: 'scan', promptChars: 80, structuredOutput: false, existingWorkspace: false, complex: false }, {
+          id: 'route-probe', instructions: 'Does this bounded inspection metadata suggest simple or complex work?',
           choices: { simple: 'Bounded local lookup', complex: 'Multi-step ambiguous analysis' }, fallback: 'complex',
         }, AbortSignal.timeout(config.jev.timeoutMs));
         checks.jevProbe = judgment;
@@ -201,6 +230,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       }
       const provider = new CodexProvider(config); const probes = [];
       for (const [model, profile] of new Map(Object.values(config.roles).map(profile => [profile.model, profile]))) {
+        if (premiumWarning(profile)) output(premiumWarning(profile));
         try {
           const result = await provider.run({ prompt: 'Do not call any tools. Return {"ok":true}. This is a connectivity check.',
             options: { id: 'probe', role: 'scan', schema: { type: 'object', additionalProperties: false, required: ['ok'], properties: { ok: { type: 'boolean' } } } },
@@ -214,7 +244,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
   const repo = await repository(repoPath);
   if (command === 'chat') {
-    if (subject && (values.orchestrate || values.auto || values.manual || values.jev || values['no-jev'] || values['agents-file'] || values.model || values.effort)) throw new Error('Resume a chat with its saved settings, then use /orchestrate, /agents, /model or /jev to change them.');
+    if (subject && (values.orchestrate || values.auto || values.manual || values.jev || values['no-jev'] || values['jev-task-text'] || values['token-budget'] || values['agents-file'] || values.model || values.effort)) throw new Error('Resume a chat with its saved settings, then use /orchestrate, /agents, /model or /jev to change them.');
     await runChat(root, repo, config, execute, subject, values.orchestrate); return;
   }
   let guidedRequest = positionals.slice(1).join(' ');
@@ -222,15 +252,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     console.log('\nCODEX ORCHESTRATOR / REAL TASK\nDescribe a task for this repository. Use codex separately for ordinary chat.');
     guidedRequest = (await question('What would you like to work on? ')).trim();
     if (!guidedRequest) { output('No task entered. Nothing started.'); return; }
-  }
-  if (['run', 'plan', 'start'].includes(command) && !values.manual && !values.auto && !values['agents-file'] && mode === 'tui') {
-    const input = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      console.log('\nCODEX ORCHESTRATOR / AGENT ASSIGNMENT\n  Manual: approve the model and effort before every job.\n  Auto: allow configured role routing' + (config.jev?.enabled ? ' and Jev decisions.' : '.'));
-      let selected = '';
-      do { selected = (await input.question('Choose [M]anual or [A]uto (default M): ')).trim().toLowerCase(); } while (!['', 'm', 'manual', 'a', 'auto'].includes(selected));
-      config.selectionMode = ['a', 'auto'].includes(selected) ? 'auto' : 'manual';
-    } finally { input.close(); }
   }
   if (command === 'plan' || command === 'start') {
     const request = command === 'start' ? guidedRequest : positionals.slice(1).join(' ');
@@ -287,6 +308,10 @@ async function question(prompt: string): Promise<string> {
 }
 
 async function execute(store: Store, provider: Provider, mode: 'tui' | 'plain' | 'json', demo = false, signal?: AbortSignal): Promise<void> {
+  if (store.state.config.jev?.enabled && !demo) {
+    const notice = { type: 'jev.disclosure', message: `Hosted TypeSafe routing enabled. ${store.state.config.jev.shareTaskText ? 'Task text/decision state sharing ON.' : 'Metadata only; task text sharing OFF.'} Quality and savings depend on workload; routing is optional.` };
+    console.log(mode === 'json' ? JSON.stringify(notice) : notice.message);
+  }
   const picker = mode === 'tui' ? new AgentPicker() : undefined;
   const runtime = new Runtime(store, provider, undefined, picker?.select); const detach = attachDashboard(runtime, mode, demo, picker);
   const onStop = () => runtime.stop(); process.on('SIGINT', onStop); process.on('SIGTERM', onStop);

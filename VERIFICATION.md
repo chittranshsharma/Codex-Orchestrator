@@ -1,5 +1,15 @@
 # Verification — Codex Workflow 0.1.0
 
+## Current release: 0.6.0
+
+51 automated checks pass locally, including new credential isolation, env-file/setup preservation, explicit model precedence, pre-call premium warnings, usage accounting, scheduling budgets, fresh-chat defaults, metadata disclosure filtering, Jev request reuse, failure fallback, and removal of the unnecessary audit summary call. Existing isolated edit/verifier/apply and resume checks remain in force. The public release is gated by the platform matrix in GitHub Actions.
+
+Real Windows SDK runs used Luna/low for a scan and Sol 6/medium for independent verification of a tiny fixture. Both completed correctly: `20261016171942-9e6ab6db` before worker context limits and `20261016172114-5134eef7` afterward. Reported totals were 56476 and 48221 input+output tokens respectively (cached input is a subset). This is a two-run compatibility/overhead smoke comparison, not a controlled workload benchmark: outputs and caching differed, so it does not establish general token savings or a quality tradeoff. No premium models or Jev calls were needed. Worker skill discovery is bounded to 1000 tokens and individual tool history to 3000 through documented Codex configuration.
+
+The global Jev env template was created outside the repository and credential status showed unconfigured without printing content. The installed app skill was updated and validated. Interactive Windows checks exercised Auto defaults, Jev ON without a key, mode toggling and `/new` producing a distinct fresh session. The Jev image is the real renderer with clearly labeled simulated data, not measured live output.
+
+No TypeSafe credential is available, so live Jev routing quality and net savings remain unmeasured. The implementation addresses that risk with opt-in hosted requests, metadata-only default disclosure, local fallback, and explicit text-sharing consent. Neither these tests nor probabilities establish fault-free behavior or that orchestration always uses fewer tokens than a direct turn.
+
 ## Current release: 0.5.1
 
 42 automated tests pass locally. A Windows terminal check opened chat, switched orchestration on and off, selected `gpt-6.1-sol/low` with the slash form, and completed a real Codex direct turn that returned READY. The new activity screen appeared during the model call and returned to the same chat afterward. The live view, long label wrapping, and model parsing have focused tests. The Impeccable detector returned no findings. GitHub release matrix results are tracked on the v0.5.1 Actions run.

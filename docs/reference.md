@@ -1,10 +1,10 @@
 # Codex Workflow
 
-Version 0.5 adds persistent `cwf`/`cwf chat` sessions. `/orchestrate on|off` switches routing for the next prompt without resetting the lead thread. OFF runs directly in the checkout; ON uses read-only lead planning followed by reviewed isolated workflow jobs. `/agents manual|auto`, `/model MODEL [EFFORT]`, `/jev on|off`, `/status`, `/history`, `/runs`, `/apply RUN_ID JOB_ID` and `/exit` are available. `cwf chats` lists saved sessions, and `cwf chat CHAT_ID` resumes one from the same repository. Prior task-launcher instructions below still apply to the explicit `start` command.
+Version 0.6: `cwf` starts a fresh conversation every time. `/new` starts another; resumption is optional through `cwf chat CHAT_ID`. `/orchestrate on|off` retains the current lead thread. OFF edits the current checkout; ON plans read-only and launches reviewed isolated jobs. Commands include `/agents manual|auto`, `/model MODEL [EFFORT]` (or `MODEL/EFFORT`), `/jev on|off`, `/status`, `/usage`, `/history`, `/runs`, `/apply RUN_ID JOB_ID`, and `/exit`.
 
-The guided real-task entry point is `cwf` (interactive terminal) or `cwf start "task"`. It prompts for a task and Manual/Auto selection, uses the real planner, displays the generated script, and requires typing RUN before executing it. Enter saves without executing. `codex` remains a separate ordinary coding/chat command. `cwf demo` is an optional simulation only. Noninteractive tools should continue to use `plan`, inspect the saved source, and then use `run`. Public compiled packages are distributed through GitHub Releases.
+`cwf start "task"` is the separate single-task launcher: it plans, displays trusted source and requires RUN. In Codex app, install/update the packaged skill (`cwf install-skill --update`) and say “use orchestrator.” The current agent authors and inspects a script, then invokes `run --auto --plain`, avoiding a second planner call. Automatic skill selection depends on the app discovering the skill; restart/reload skills if newly installed. This does not replace the app's native interface.
 
-Version 0.3 defaults new runs to Manual assignment. Use `--manual` to choose model/effort before every job in a terminal, or `--manual --agents-file agents.json` for exact per-job assignments in command tools. Missing assignments fail visibly. `--auto` explicitly enables role routing and, with `--jev`, dynamic Jev routing. An interactive run without a mode flag asks you to choose. Manual mode never calls Jev, and workflow `decide` calls use their explicit fallback. Saved selections are reused on resume unless an invalidated job's prompt changes. Older checkpoints retain their saved behavior.
+New runs default to Auto. Use `--manual` for the per-job picker or `--manual --agents-file agents.json` for exact job mappings. Missing manual assignments block that job. Explicit agent model/effort, assignment maps and CLI role overrides take priority over Jev. Manual mode never calls Jev. Existing configuration/checkpoints retain their saved choices; no saved chat is resumed implicitly.
 
 A terminal workflow runner built on the official Codex SDK. A lead Codex model can write a reusable JavaScript workflow. The script coordinates smaller jobs, routes each role to its configured model, and keeps intermediate results in local run files. The terminal shows live job activity and actual token usage reported by Codex.
 
@@ -54,7 +54,7 @@ The dashboard opens automatically in an interactive terminal. Use `--plain` in C
 
 ## Model routing
 
-The default route is GPT-6 Luna for scans and GPT-6.1 Sol for planning, edits, verification, and review, with high reasoning effort. These are starting profiles, not a benchmark claim. Models must be available to your account. The runner fails visibly when a requested model is unavailable; it does not silently substitute another model.
+Defaults: Luna/medium for planning and review, Luna/low for scans, Sol 6/medium for edits and independent verification. Local complexity metadata can raise effort to high without another model call. Premium Astra and Sol 6.1 are not default routes; if selected, a warning is emitted before the call. Models must be available to your account; unavailable requested models fail visibly. These are policies, not measured quality or savings claims.
 
 `cwf init` writes a reviewable `.codex-workflow.json`. You can change every role there, or override individual roles for one run:
 
@@ -64,7 +64,9 @@ cwf run audit --model scan=gpt-6-luna --model verify=gpt-6.1-sol --effort verify
 
 The coordinator script chooses a **role**; the runner uses that role's configured model by default. Enable optional Jev routing with `--jev` to select a computing tier per task. Deterministic loops and execution stay in local code. Jev uses TypeSafe's hosted API and requires a separate key.
 
-Default limits: four concurrent jobs, 100 jobs per run, 15 minutes per job, one transient retry for read-only jobs. Edits are not automatically retried. Configure limits in `.codex-workflow.json`; supported concurrency is 1–32 and the total job cap is 1–1,000. Token counts are displayed, not enforced as a spending budget. Worker limits do not cap arbitrary JavaScript outside the workflow API.
+Default limits: two concurrent workers, 16 jobs per run, 15 minutes per job, no automatic request retries. `--token-budget N` stops scheduling new model calls once reported input+output tokens reach N (default 100000). In-flight and unreported usage can exceed this limit; it is not a hard spending cap. Chat `/usage` includes lead and recorded workflow usage; cached input is a subset of input, not added twice. Budgets count Codex tokens, while Jev tokens are recorded separately. Smaller models do not necessarily use fewer tokens, and orchestration can cost more than a direct turn. Worker limits do not sandbox arbitrary coordinator JavaScript.
+
+Worker sessions use a 1000-token skill catalog and a 3000-token limit per retained tool output via [documented Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference). This can shorten discovery/tool history; workers should read targeted sections and include required skill paths in task prompts when relevant. The persistent chat lead retains its ordinary skill catalog.
 
 ## Terminal controls
 
@@ -115,7 +117,7 @@ Inputs can come from `--args` or `--args-file inputs.json`. The file form avoids
 
 ## Workflow API
 
-- `agent(prompt, { id, role, label?, schema?, workspace?, timeoutMs?, webSearch? })`: a fresh Codex thread. `schema` requests JSON output, also validated locally. `workspace` references a completed edit job, allowing a later editor or verifier to use that same worktree. Web search defaults to disabled; a research job can explicitly request `cached` or `live`.
+- `agent(prompt, { id, role, model?, effort?, label?, schema?, workspace?, timeoutMs?, webSearch? })`: a fresh Codex thread. Explicit model/effort overrides routing. `schema` requests object-root JSON output, also validated locally. `workspace` references a completed edit job. Web search defaults to disabled; research can explicitly request `cached` or `live`.
 - `pipeline(items, (item, index) => ...)`: fan out up to 4,096 items, subject to the active-job and total-job limits. Returns `null` for failed branches and records the failure; the final run is marked `partial`.
 - `parallel([() => task1(), () => task2()])`: run task functions concurrently, with the same failure semantics.
 - `phase(title)`: label following jobs in the dashboard. Call between stages, outside concurrent callbacks.
@@ -186,11 +188,11 @@ cwf run audit --target src --jev
 cwf run jev-review --target src/auth --target src/api --question 'Find session expiry bugs' --jev
 ```
 
-Set the key locally in your terminal; keep it out of Git and workflow inputs. `cwf doctor` reports only whether a key is present. `cwf doctor --jev --live` makes a small Jev probe plus the existing Codex model probes.
+Use `cwf jev setup` to create the global `jev.env` file under the state directory (on Windows normally `%LOCALAPPDATA%/CodexWorkflow/jev.env`). Edit it locally and add `TYPESAFE_API_KEY=...`; never paste a key into chat. Or use `--env-file C:/private/jev.env` / `CWF_ENV_FILE`. An existing process environment key takes priority. Only that key is read; no other variables are loaded. The key is not persisted in config/reports or passed into Codex worker environments. This does not encrypt the local file or prevent tools with independent filesystem access from reading it. `cwf jev status` reports presence without printing it. `cwf jev probe` makes one synthetic metadata request to check connectivity, not quality. It exits nonzero on fallback. `doctor --live` also calls the configured Codex models.
 
-`cwf init` includes a `jev` configuration. Set `jev.enabled` to true to enable it for a repository. `--jev` and `--no-jev` override it for a new run. The configurable fast, standard and deep profiles select both model and reasoning effort. Defaults are Luna/high, Sol/high and Sol/xhigh. Planning, verification and final review have a standard tier floor. Existing role overrides are fallback profiles; change `jev.profiles` to override the dynamically selected profiles.
+Jev is optional and off by default. `--jev` enables hosted metadata routing. Its profiles default to Luna/low, Sol 6/medium and Sol 6/high. Planning, verification and final review have a standard tier floor. `--model ROLE=MODEL` and `--effort ROLE=EFFORT` mark those roles fixed so Jev cannot override them. Exact job assignments take priority as well.
 
-Jev receives each job's prompt, role and label through TypeSafe's hosted API. It does not receive repository files automatically; include relevant evidence in prompts or decision state. Decisions below the configurable confidence threshold (initially 0.8), missing keys, malformed responses, timeouts and service errors use the explicit fallback and appear in the log. The threshold is a starting policy, not a measured accuracy guarantee. Missing keys use fixed role routing. Once saved, a decision is reused for identical inputs on resume, including fallback decisions; start a new run to reconsider them.
+Default disclosure is restricted to role, prompt character count, structured-output/workspace flags and a local complexity flag. No prompt text, label, filename or code is included. Generic semantic `decide` calls use their explicit fallback in this mode. `--jev-task-text` (or `jev.shareTaskText:true`) separately opts into sharing up to 2000 prompt characters per route and explicit semantic state, capped at 8000 serialized characters. Treat that as disclosure to TypeSafe, not local processing. Equivalent judgments share a request/cache within a run; reused decisions record zero additional Jev tokens. HTTP/request failures disable further hosted attempts for that run. Missing keys, invalid responses and low confidence use fallback. Confidence is not correctness; metadata is limited evidence and may not improve decisions. No live routing quality or token savings claim is made without workload evaluation.
 
 The dashboard shows the actual assigned model per job and Jev decisions in the session log. Reports and saved JSON include probabilities, resolved Jev model, confidence, fallback reason and separate Jev token usage. No key is saved in run configuration. No automatic model retry, file splitting, skipped verification or patch application is triggered by the router.
 

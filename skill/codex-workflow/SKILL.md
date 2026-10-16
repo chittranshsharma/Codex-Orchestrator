@@ -1,30 +1,29 @@
 ---
 name: codex-workflow
-description: "Plan, run, inspect, and resume scripted Codex workflows using the local codex-workflow CLI, including parallel audits, model routing, and isolated verified patches. Use when the user requests this workflow runner or a saved scripted workflow."
+description: Run Codex Orchestrator when the user asks to use the orchestrator, cwf, multi-model workflows, or saved Codex workflows. Supports automatic task routing, explicit model choices, isolated edits, verification, and checkpoint resumption.
 ---
 
-# Codex Workflow
+# Codex Orchestrator
 
-Use the installed `codex-workflow` command (`cwf` is an alias). Run `codex-workflow --help` if the local CLI options are needed.
+When the user says “use orchestrator,” execute the task through `cwf` from the intended Git repository. In Codex app command tools use `--plain` or `--json`. Do not launch the interactive chat inside a command tool. A terminal dashboard can be opened separately with `cwf watch RUN_ID`.
 
-For a human in an interactive terminal, `cwf` or `cwf chat` opens persistent coding chat. `/orchestrate on|off` switches between coordinated jobs and direct coding while retaining the lead thread. `/agents manual|auto` controls workers; `/model MODEL [EFFORT]` controls the lead. `/exit` saves; `cwf chats` lists sessions and `cwf chat CHAT_ID` resumes from the same repository. OFF can edit the current checkout; ON prepares isolated patches. `/apply RUN_ID JOB_ID` explicitly applies a verified patch belonging to that chat. For a single guided task use `cwf start "task"`. `demo` is only a simulation. In noninteractive command tools use the explicit plan/review/run flow below. Normal `codex` use remains independent and unaffected.
+Use automatic assignment unless the user asks for manual selection. Honor requested models before any call: use `--model ROLE=MODEL --effort ROLE=EFFORT` for role preferences, or `model`/`effort` in each `agent` option for task preferences. Exact job mappings can use `--agents-file PATH` in manual runs. Explicit assignments override routing. Warn the user before using `gpt-6-astra` or `gpt-6.1-sol`; the runner also emits a warning before each such call. Do not change an unavailable requested model silently.
 
-Run commands from the intended Git repository, or specify `--repo` with its absolute path. Use `--plain` in Codex's command tools, or `--json` when parsing events. The interactive dashboard runs in a real terminal; it is not a native Codex panel.
+For audits use `cwf run audit --target RELATIVE_PATH --auto --plain`; add `--fix` when fixes are requested. For other tasks, author a short trusted `.mjs` workflow yourself in this conversation, inspect it, then execute `cwf run PATH.mjs --auto --plain`. This avoids a second planning model call. Do not ask the user to choose workers unless they requested Manual. Do not call `cwf plan` when you can author the workflow here.
 
-New runs default to Manual. Preserve the user's choice of models for every job: use `--manual --agents-file <reviewed-map.json>` for noninteractive execution, or let the user run `--manual` in their terminal picker. The JSON file maps exact job IDs to `{model,effort}`. Missing assignments block that job visibly. Use `--auto` only when the user explicitly chooses automatic assignment; `--jev` alone does not grant that choice. Manual disables Jev requests and uses explicit fallbacks for workflow decisions. Saved manual selections survive resume; changed downstream prompts prompt again.
+```js
+export const meta = {name:'inspect',description:'Inspect the requested code'};
+export default async function({agent,phase}) {
+  phase('Inspect');
+  return agent('Inspect the user-requested target. Return concise evidence.',
+    {id:'inspect',role:'scan'});
+}
+```
 
-For an audit, use `codex-workflow run audit --target <relative-path> --plain`. Add `--question` for the user's focus. Add `--fix` when the user requested fixes; this prepares patches in dedicated worktrees. It does not apply them to the main checkout. Edit runs require a clean working tree; preserve existing user work instead of resetting or stashing it automatically.
+Roles: `scan`, `plan`, `edit`, `verify`, `review`. Omit `model` to use local routing. `pipeline(items,callback)` and `parallel([functions])` return null for failed branches; report these failures. Schemas must have an object root. Editors receive isolated worktrees and require a clean source checkout. To verify a patch, run a separate `verify` job with `workspace:EDIT_ID` returning `{passed:true}` only on actual success, then `await acceptPatch(EDIT_ID,VERIFY_ID)`. Apply only when authorized with `cwf apply RUN_ID --task EDIT_ID`, then check the combined checkout diff and relevant integration tests.
 
-For a custom repeatable task, use `codex-workflow plan "<task>" --out <workflow.mjs> --plain`, inspect the generated source, and then run the reviewed script with `codex-workflow run <workflow.mjs> --plain`. Scripts are trusted local Node.js code. The worker sandboxes do not sandbox the coordinator script.
+Use the fewest workers needed. Group related reads; avoid redundant scans or summary workers. New defaults use Luna/Sol 6, two concurrent workers, a 16-job cap, and a reported 100000-token scheduling limit (`--token-budget N`). Running calls and unreported usage can exceed it. Model choice alone does not guarantee savings. Read the generated report before claiming completion; failed or unverified work remains visible.
 
-The CLI prints a run ID and report path. Read the report and relevant patch files before summarizing the outcome. Keep failed jobs, unverified findings, unfinished fixes, and blocked checks visible. `partial` is not successful completion of the requested work.
+Jev is optional and off by default. `cwf jev setup` prints the global env-file location; `--env-file PATH` reads only `TYPESAFE_API_KEY`. Never read or print the credential. `--jev` sends bounded routing metadata to hosted TypeSafe; `--jev-task-text` separately opts into sending job text and semantic decision state. Do not enable text disclosure without the user's informed request. Local routing works without Jev. Its probabilities are not proof of correctness or savings.
 
-Use `codex-workflow show <run-id>` to inspect results and `codex-workflow resume <run-id> --plain` to retry unfinished work. Resume uses the saved script, input, and routing settings; it refuses changed repositories. Start a new run for changed inputs. Avoid retrying a persistent failure without addressing its cause.
-
-When the user asks to apply a reviewed patch, use `codex-workflow apply <run-id> --task <edit-job-id>`. This requires a recorded passing independent verifier and checks for conflicts. Review the resulting main-checkout diff and run appropriate integration checks. Multiple individually valid patches can conflict or fail together; do not represent per-patch verification as combined integration verification.
-
-Models are assigned by role from `.codex-workflow.json`, or per-run `--model ROLE=MODEL` and `--effort ROLE=EFFORT`. Honor the user's model choices. If a model is unavailable, report it and select another only within the user's authorization. Do not silently claim fallback or token savings.
-
-The worker processes already perform the delegated tasks. Do not create an additional subagent swarm around the runner unless the user asks for one.
-
-For Jev model and reasoning routing, add `--jev` or enable `jev.enabled` in repository config. Read the TypeSafe skill when designing new Jev questions. `TYPESAFE_API_KEY` must be supplied through the environment; never put credentials in scripts, arguments, Git, or chat. Jev receives job prompts and explicit decision state. Missing keys, service errors and low confidence visibly use fallback profiles. Reports record decisions and Jev usage separately. Verification and apply gates remain mandatory. For semantic workflow branches, use `decide(state,{id,instructions,choices,fallback})` with bounded loops and an explicit fallback; reserve the `route-` id prefix for the runtime.
+Start fresh by default. Resume only when asked: `cwf resume RUN_ID --plain` replays saved configuration and matching checkpoints and rejects changed source state. For humans, `cwf` always starts a fresh chat; `/new` starts another. `cwf chat CHAT_ID` is optional explicit resumption. Normal `codex` use is independent.

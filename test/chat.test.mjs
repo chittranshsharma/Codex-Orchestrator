@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ChatSession, openChat, listChats, chatPath } from '../dist/chat.js';
 import { defaultConfig } from '../dist/config.js';
-import { renderChatActivity, renderChatHeader, renderChatLabel } from '../dist/dashboard.js';
+import { clean, renderChatActivity, renderChatHeader, renderChatLabel, renderJevPanel } from '../dist/dashboard.js';
 
 async function fixture(t, run) {
   const root = await mkdtemp(join(tmpdir(), 'cwf-chat-test-'));
@@ -107,4 +107,37 @@ test('chat terminal renders a bounded activity view and keeps important labels r
   const message = renderChatLabel('ERROR', 'The requested model is unsupported for this account; select a model listed by Codex.', 48);
   assert.match(message, /select a model listed by Codex/);
   assert.ok(message.split('\n').every(line => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').length <= 48));
+  for (const [width,height] of [[32,12],[80,24],[110,36]]) {
+    f.state.orchestrate = true;
+    const screen = renderChatActivity(f.state, 'request', ['COMMAND  inspecting'], Date.now(), width,height);
+    assert.ok(screen.split('\n').length <= height);
+    assert.ok(screen.split('\n').every(line => clean(line).length <= width));
+    assert.match(clean(screen), /COMMAND/);
+  }
+  f.state.config.jev.enabled = true;
+  const panel = renderJevPanel(f.state.config, { route: { signature:'x', judgment: {choice:'role',confidence:0,probabilities:{},model:'jev',fallback:true,error:'No key',usage:{input_tokens:0,output_tokens:0}} } },80).join('\n');
+  assert.match(panel,/FALLBACK/);
+});
+
+test('starting without a chat ID always creates a fresh conversation', async t => {
+  const f = await fixture(t);
+  f.state.threadId = 'old-thread'; await f.session.save();
+  const fresh = await openChat(f.root, f.repo, f.config);
+  assert.notEqual(fresh.id, f.state.id); assert.equal(fresh.threadId, undefined);
+  assert.deepEqual(fresh.messages, []);
+});
+
+test('chat counts reported usage, warns before premium calls and blocks the next turn at budget', async t => {
+  let warned = false;
+  const f = await fixture(t, async request => {
+    assert.equal(warned, true);
+    await request.emit({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 5 } });
+    return { text: 'ready', usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 5 } };
+  });
+  f.state.config.tokenBudget = 15;
+  await f.session.command('/model gpt-6.1-sol low');
+  await f.session.turn('go', async () => ({ text: 'unused' }), () => {}, () => { warned = true; });
+  assert.equal(f.state.usage.input_tokens, 10); assert.equal(f.state.usage.output_tokens, 5);
+  await assert.rejects(f.session.turn('again', async () => ({ text: 'unused' })), /token budget reached/);
+  assert.equal(f.calls.length, 1);
 });

@@ -11,10 +11,12 @@ import type { ChatState, WorkflowOutcome } from './chat.js';
 import { createRun, resumeRun, writeReport } from './runtime.js';
 import { applyPatch } from './git.js';
 import { CodexProvider } from './provider.js';
-import { clean, renderChatActivity, renderChatHeader, renderChatLabel, renderChatState } from './dashboard.js';
+import { clean, renderChatActivity, renderChatHeader, renderChatLabel, renderChatState, renderJevPanel } from './dashboard.js';
 import { reviewAndLaunch } from './guided.js';
 import type { Store } from './storage.js';
 import type { Config, Provider } from './types.js';
+import { premiumWarning, totalTokens } from './policy.js';
+import { loadJevEnv, jevEnvSource } from './environment.js';
 const exec = promisify(execFile);
 export type RunExecutor = (store: Store, provider: Provider, mode: 'tui' | 'plain' | 'json', demo?: boolean, signal?: AbortSignal) => Promise<void>;
 const print = (value: string) => console.log(value.split('\n').map(line => clean(line)).join('\n'));
@@ -102,6 +104,9 @@ class ChatActivity {
   }
 }
 export async function runChat(root: string, repo: string, config: Config, execute: RunExecutor, id?: string, orchestrate = false): Promise<void> {
+  while (await runChatSession(root, repo, config, execute, id, orchestrate)) { id = undefined; orchestrate = false; }
+}
+async function runChatSession(root: string, repo: string, config: Config, execute: RunExecutor, id?: string, orchestrate = false): Promise<boolean> {
   const state = await openChat(root, repo, config, id);
   if (!id && orchestrate) state.orchestrate = true;
   const session = new ChatSession(root, state, new SdkChatEngine(state.config));
@@ -109,6 +114,7 @@ export async function runChat(root: string, repo: string, config: Config, execut
   const inputReader = new ChatInput();
   let currentActivity: ChatActivity | undefined;
   let terminating = false;
+  let freshChat = false;
   const stop = () => session.stop();
   const terminate = () => { terminating = true; session.stop(); };
   process.on('SIGINT', stop); process.on('SIGTERM', terminate);
@@ -125,7 +131,9 @@ export async function runChat(root: string, repo: string, config: Config, execut
       launch: async reviewed => {
         inputReader.close();
         signal.throwIfAborted();
-        const store = await createRun(root, repo, reviewed, { request }, state.config);
+        const remaining = state.config.tokenBudget ? state.config.tokenBudget - totalTokens(state.usage) - (state.workflowTokens ?? 0) : undefined;
+        if (remaining !== undefined && remaining <= 0) throw new Error('Planning reached the reported token budget. No workers started.');
+        const store = await createRun(root, repo, reviewed, { request }, { ...state.config, ...(remaining ? { tokenBudget: remaining } : {}) });
         const previousExitCode = process.exitCode;
         try { await execute(store, new CodexProvider(state.config), 'tui', false, signal); }
         catch (error) { print(`Workflow did not complete: ${error instanceof Error ? error.message : String(error)}`); }
@@ -133,14 +141,14 @@ export async function runChat(root: string, repo: string, config: Config, execut
         const report = await writeReport(store);
         const patches = Object.values(store.state.tasks).filter(t => t.patch).map(t => ({ job: t.id, verifiedBy: t.verifiedBy ?? null, applied: store.state.applied.includes(t.id) }));
         const result = typeof store.state.result === 'string' ? store.state.result : JSON.stringify(store.state.result ?? null);
-        outcome = { runId: store.state.id, text: `Workflow ${store.state.id}: ${store.state.status}.\nReport: ${report}\nPatches: ${JSON.stringify(patches)}\nResult: ${result.slice(0, Math.min(32000, state.config.maxInputChars / 2))}${result.length > Math.min(32000, state.config.maxInputChars / 2) ? '\n[Result shortened; read the full report.]' : ''}${store.state.error ? `\nError: ${store.state.error}` : ''}` };
+        outcome = { runId: store.state.id, tokens: Object.values(store.state.tasks).reduce((sum, task) => sum + totalTokens(task.usage), 0), text: `Workflow ${store.state.id}: ${store.state.status}.\nReport: ${report}\nPatches: ${JSON.stringify(patches)}\nResult: ${result.slice(0, Math.min(6000, state.config.maxInputChars / 2))}${result.length > Math.min(6000, state.config.maxInputChars / 2) ? '\n[Result shortened; read the full report.]' : ''}${store.state.error ? `\nError: ${store.state.error}` : ''}` };
       },
     });
     return outcome;
   };
   process.stdout.write('\x1b[2J\x1b[H');
   console.log(renderChatHeader(state, width()));
-  console.log(renderChatLabel('SYSTEM', `Persistent chat ready. Resume later with: cwf chat ${state.id}`, width()));
+  console.log(renderChatLabel('SYSTEM', 'Fresh conversation ready. /new starts another; resuming old chats is optional.', width()));
   console.log();
   try {
     await session.save();
@@ -156,6 +164,7 @@ export async function runChat(root: string, repo: string, config: Config, execut
       }
       if (!input.trim()) continue;
       try {
+        if (input.trim() === '/new') { freshChat = true; break; }
         if (input.startsWith('/apply ')) {
           const [, runId, jobId, extra] = input.trim().split(/\s+/);
           if (!runId || !jobId || extra || !state.runs.includes(runId)) throw new Error('Usage: /apply RUN_ID JOB_ID (run must belong to this chat)');
@@ -164,14 +173,23 @@ export async function runChat(root: string, repo: string, config: Config, execut
           print(message); continue;
         }
         if (input.startsWith('/')) {
+          if (input.trim() === '/jev on') await loadJevEnv(root, jevEnvSource() ?? process.env.CWF_ENV_FILE);
           const result = await session.command(input);
-          if (['/status', '/orchestrate', '/agents', '/model', '/jev'].includes(input.trim().split(/\s+/)[0]!)) console.log(renderChatState(state, width()));
+          if (['/status', '/orchestrate', '/agents', '/model', '/jev'].includes(input.trim().split(/\s+/)[0]!)) {
+            console.log(renderChatState(state, width()));
+            console.log(renderJevPanel(state.config, {}, width(), state.orchestrate).join('\n'));
+            if (input.trim() === '/status') print(result.text);
+          }
           else print(result.text);
+          if (input.startsWith('/model') && premiumWarning(state.profile)) console.log(renderChatLabel('SYSTEM', premiumWarning(state.profile)!, width()));
+          if (input.trim() === '/jev on') console.log(renderChatLabel('SYSTEM', `Jev is hosted by TypeSafe. ${state.config.jev?.shareTaskText ? 'Task text sharing is ON.' : 'Only routing metadata leaves this runner; semantic decisions use local fallback.'}`, width()));
           if (result.exit) break;
           continue;
         }
         console.log();
         console.log(renderChatLabel('YOU', input.replace(/\s+/g, ' '), width()));
+        const notice = premiumWarning(state.profile);
+        if (notice) console.log(renderChatLabel('SYSTEM', notice, width()));
         currentActivity = new ChatActivity(state, input.replace(/\s+/g, ' '));
         currentActivity.start();
         const result = await session.turn(input, workflow, event => currentActivity?.event(event));
@@ -190,4 +208,5 @@ export async function runChat(root: string, repo: string, config: Config, execut
     await session.save(); await session.close();
     print(`\nChat saved. Resume: cwf chat ${state.id}`);
   }
+  return freshChat;
 }

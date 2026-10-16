@@ -1,8 +1,10 @@
 import { emitKeypressEvents } from 'node:readline';
 import type { Runtime } from './runtime.js';
-import type { RunState } from './types.js';
+import type { Config, RunState } from './types.js';
 import type { AgentPicker } from './selection.js';
 import type { ChatState } from './chat.js';
+import { jevKey } from './environment.js';
+import { premiumWarning, totalTokens } from './policy.js';
 
 const reset = '\x1b[0m';
 const palette = { plan: 183, scan: 117, edit: 215, verify: 157, review: 183, muted: 250, line: 60, text: 255, error: 203 };
@@ -16,8 +18,23 @@ const rule = (title: string, width: number) => paint(clip(` -- ${title} `, width
 const status = { queued: 'WAIT', running: 'LIVE', completed: 'DONE', failed: 'FAIL', cancelled: 'STOP', skipped: 'SKIP' };
 export interface ViewOptions { width?: number; height?: number; selected?: number; details?: boolean; logs?: string[]; demo?: boolean }
 
+export function renderJevPanel(config: Config, decisions: RunState['decisions'] = {}, width = 100, eligible = true): string[] {
+  const entries = Object.values(decisions).map(d => d.judgment);
+  const last = entries.at(-1);
+  const active = config.jev?.enabled && config.selectionMode !== 'manual' && eligible && Boolean(jevKey());
+  const state = !config.jev?.enabled ? 'OFF / local routing' : !eligible ? 'IDLE / orchestration off' : config.selectionMode === 'manual' ? 'BYPASSED / manual assignments' : !jevKey() ? 'NO KEY / local fallback' : 'READY / hosted TypeSafe';
+  const tokens = entries.reduce((sum, j) => sum + j.usage.input_tokens + j.usage.output_tokens, 0);
+  const rows = [rule(`JEV ROUTER  ${state}`, width),
+    paint(clip(` ${active ? '[metadata] -> JEV -> [tier] -> [worker]' : '[local policy] -> [worker]'}  |  ${entries.length} decisions / ${num(tokens)} Jev tokens`, width), active ? palette.verify : palette.muted)];
+  if (last) {
+    const bars = Object.entries(last.probabilities).map(([key, p]) => `${key} ${'='.repeat(Math.round(p * 8))}${Math.round(p * 100)}%`).join('  ');
+    rows.push(paint(clip(` ${last.fallback ? 'FALLBACK' : last.cached ? 'CACHED' : 'SELECTED'} ${last.choice} / confidence ${last.confidence.toFixed(2)}  ${last.error ?? bars}`, width), last.fallback ? palette.edit : palette.verify));
+  } else rows.push(paint(clip(` ${config.jev?.shareTaskText ? 'Task text sharing ON / max 2000 chars per route' : 'Task text sharing OFF / only bounded task metadata'}  |  cwf jev setup`, width), palette.muted));
+  return rows;
+}
+
 export function renderChatHeader(state: ChatState, width = 100): string {
-  width = Math.max(48, Math.min(width, 120));
+  width = Math.max(24, Math.min(width, 120));
   const on = state.orchestrate;
   const mode = on ? 'ORCHESTRATION ON' : 'DIRECT CHAT';
   const location = on ? 'isolated worker jobs' : 'current checkout';
@@ -31,6 +48,7 @@ export function renderChatHeader(state: ChatState, width = 100): string {
     paint(pad(` LEAD   ${state.profile.model}  /  ${state.profile.effort}`, width), palette.plan),
     paint(pad(` WORKERS ${selection}   JEV ${jev}   RUNS ${state.runs.length}`, width), palette.muted),
     paint(pad(` SESSION ${state.id}`, width), palette.muted),
+    ...renderJevPanel(state.config, {}, width, state.orchestrate),
     rule('CHAT', width),
     paint(clip(' /orchestrate on|off   /agents manual|auto   /model MODEL [EFFORT]   /help', width), palette.scan),
   ];
@@ -38,32 +56,49 @@ export function renderChatHeader(state: ChatState, width = 100): string {
 }
 
 export function renderChatState(state: ChatState, width = 100): string {
-  width = Math.max(48, Math.min(width, 120));
+  width = Math.max(24, Math.min(width, 120));
   const on = state.orchestrate;
-  const line = `${on ? 'ORCHESTRATION ON' : 'DIRECT CHAT'}  |  ${state.profile.model}/${state.profile.effort}  |  workers ${(state.config.selectionMode ?? 'manual').toUpperCase()}  |  Jev ${state.config.jev?.enabled ? 'ON' : 'OFF'}`;
+  const line = `${on ? 'ORCHESTRATION ON' : 'DIRECT CHAT'}  |  ${state.profile.model}/${state.profile.effort}  |  ${(state.config.selectionMode ?? 'auto').toUpperCase()}  |  ${num(totalTokens(state.usage) + (state.workflowTokens ?? 0))} tokens`;
   return `\x1b[48;5;${on ? 54 : 24}m${bold(paint(pad(` ${line}`, width)))}`;
 }
 
 export function renderChatLabel(label: 'YOU' | 'CODEX' | 'PLAN' | 'SYSTEM' | 'ERROR', text: string, width = 100): string {
-  width = Math.max(48, Math.min(width, 120));
+  width = Math.max(24, Math.min(width, 120));
   const tint = label === 'ERROR' ? palette.error : label === 'PLAN' ? palette.edit : label === 'CODEX' ? palette.verify : label === 'YOU' ? palette.scan : palette.muted;
-  const content = clean(text);
+  let content = clean(text);
   const firstRoom = width - label.length - 4;
   const restRoom = width - 2;
-  const rows = [`${paint(bold(`[${label}]`), tint)} ${paint(content.slice(0, firstRoom), label === 'SYSTEM' ? palette.muted : palette.text)}`];
-  for (let i = firstRoom; i < content.length; i += restRoom) rows.push(`  ${paint(content.slice(i, i + restRoom), label === 'SYSTEM' ? palette.muted : palette.text)}`);
+  const rows: string[] = [];
+  do {
+    const room = rows.length ? restRoom : firstRoom;
+    let end = content.length <= room ? content.length : content.lastIndexOf(' ', room);
+    if (end < room / 2 && content.length > room) end = room;
+    const prefix = rows.length ? '  ' : `${paint(bold(`[${label}]`), tint)} `;
+    rows.push(prefix + paint(content.slice(0, end), label === 'SYSTEM' ? palette.muted : palette.text));
+    content = content.slice(end).trimStart();
+  } while (content);
   return rows.join('\n');
 }
 
 export function renderChatActivity(state: ChatState, request: string, events: string[], startedAt: number, width = 100, height = 30): string {
-  width = Math.max(48, Math.min(width, 120)); height = Math.max(12, height);
+  width = Math.max(24, Math.min(width, 120)); height = Math.max(12, height);
   const on = state.orchestrate;
   const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
   const title = on ? 'PLANNING WORKFLOW' : 'CODING SESSION';
+  if (height < 20) {
+    const rows = [paint(clip(` CODEX ORCHESTRATOR / ${on ? 'ON' : 'OFF'} / ${elapsed}s`, width), palette.scan),
+      paint(clip(` ${state.profile.model}/${state.profile.effort}`, width), palette.plan),
+      ...(premiumWarning(state.profile) ? [paint(clip(' WARNING: premium model allowance use', width), palette.error)] : []),
+      rule('LIVE ACTIVITY', width)];
+    const room = Math.max(1, height - rows.length - 2);
+    rows.push(...(events.length ? events.slice(-room) : ['Waiting for Codex...']).map(event => paint(clip(` ${event}`, width), palette.scan)));
+    return [...rows.slice(0, height - 2), '', paint(clip(' Ctrl+C cancel turn', width), palette.muted)].join('\n');
+  }
   const lines = [
     `\x1b[48;5;${on ? 54 : 24}m${bold(paint(pad(` CODEX ORCHESTRATOR  /  ${title}`, width)))}`,
     paint(pad(` ${on ? 'ORCHESTRATION ON' : 'DIRECT CHAT'}  |  ${state.profile.model}/${state.profile.effort}  |  ${elapsed}s`, width), on ? palette.edit : palette.scan),
     paint(pad(` Workers ${String(state.config.selectionMode ?? 'manual').toUpperCase()}  /  Jev ${state.config.jev?.enabled ? 'ON' : 'OFF'}  /  ${state.runs.length} saved runs`, width), palette.muted),
+    ...(premiumWarning(state.profile) ? [paint(clip(` WARNING: premium ${state.profile.model} / account allowance may be higher`, width), palette.error)] : []),
     '', rule('YOUR REQUEST', width),
     paint(clip(` ${request}`, width), palette.text),
     '', rule('EXECUTION PATH', width),
@@ -72,6 +107,7 @@ export function renderChatActivity(state: ChatState, request: string, events: st
       paint(clip('                         +-> SCAN / EDIT / VERIFY -> REPORT', width), palette.verify)] : []),
     '', rule('LIVE ACTIVITY', width),
   ];
+  if (height >= 26) lines.splice(4, 0, ...renderJevPanel(state.config, {}, width, on));
   const room = Math.max(1, height - lines.length - 3);
   lines.push(...(events.length ? events.slice(-room) : ['Waiting for Codex...']).map(event => paint(clip(` ${event}`, width), palette.scan)));
   return [...lines.slice(0, height - 2), '', paint(clip(' Ctrl+C cancel turn  /  chat returns when Codex finishes', width), palette.muted)].join('\n');
@@ -87,10 +123,13 @@ export function renderDashboard(state: RunState, options: ViewOptions = {}): str
   const lines = [`\x1b[48;5;24m${bold(paint(pad(' CODEX ORCHESTRATOR' + (options.demo ? '  [SIMULATION]' : ''), width)))}`,
     paint(pad(` ${state.name}  /  ${state.status.toUpperCase()}`, width), state.status === 'failed' ? palette.error : palette.scan),
     paint(pad(` ${mode}`, width), palette.muted),
-    pad(` ${running}/${state.config.concurrency} active   ${done}/${tasks.length} done   ${failed} failed   ${num(usage)} tokens   ${elapsed}s`, width),
+    pad(` ${running}/${state.config.concurrency} active   ${done}/${tasks.length} done   ${failed} failed   ${num(usage)}/${state.config.tokenBudget ? num(state.config.tokenBudget) : '-'} tokens   ${elapsed}s`, width),
     paint(pad(` ${state.id}  ${state.repo}`, width), palette.muted)];
 
   if (height >= 24) {
+    lines.push('', ...renderJevPanel(state.config, state.decisions, width));
+    const premium = tasks.find(t => ['queued', 'running'].includes(t.status) && premiumWarning(t));
+    if (premium) lines.push(paint(clip(` WARNING: ${premium.model}/${premium.effort} / premium allowance use`, width), palette.error));
     lines.push('', rule('PIPELINE', width));
     const phases = state.phases.length ? state.phases : ['Waiting for workflow'];
     for (const phase of phases.slice(-Math.min(4, Math.floor(height / 8)))) {
@@ -106,7 +145,7 @@ export function renderDashboard(state: RunState, options: ViewOptions = {}): str
   if (options.details && tasks[selected]) {
     const t = tasks[selected]!;
     const rows = [` ${t.label}  [${status[t.status]}]`, ` ${t.role} / ${t.model} / effort ${t.effort}`,
-      ` Assignment: ${t.assignment ? 'manual selection' : t.routing ? 'Jev' : 'role profile'}`,
+      ` Assignment: ${t.assignment ? 'explicit selection' : t.routing ? 'Jev' : 'local role policy'}`,
       ...(t.routing ? [` Jev: ${t.routing.choice} / confidence ${t.routing.confidence.toFixed(2)}${t.routing.fallback ? ' / FALLBACK' : ''}`, ...(t.routing.error ? [` ${t.routing.error}`] : [])] : []),
       ` ${t.error ?? t.activity ?? 'Waiting for activity'}`, ` Attempts ${t.attempts} / ${num(t.usage.input_tokens)} input / ${num(t.usage.output_tokens)} output`,
       ...(t.patch ? [` Patch: ${t.verifiedBy ? 'VERIFIED' : 'UNVERIFIED'} / ${t.patch}`] : [])];

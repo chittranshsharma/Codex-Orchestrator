@@ -1,4 +1,6 @@
 interface:
-  display_name: "Codex Workflow"
+  display_name: "Codex Orchestrator"
   short_description: "Run scripted Codex jobs with model routing"
   default_prompt: "Use $codex-workflow to run a verified repository workflow."
+policy:
+  allow_implicit_invocation: true

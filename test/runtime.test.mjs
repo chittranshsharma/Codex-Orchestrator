@@ -281,6 +281,27 @@ test('unsupported structured-output roots fail locally before any model call', a
   assert.equal(p.calls.length, 0);
 });
 
+test('explicit task models and fixed role preferences override Jev and premium warning precedes execution', async t => {
+  const { store } = await setup(t, `await agent('inspect',{id:'explicit',role:'scan',model:'gpt-6-astra',effort:'low'});return agent('review',{id:'role',role:'review'});`, {
+    fixedRoles: ['review'], jev: { ...structuredClone(defaultConfig.jev), enabled: true },
+  });
+  let warned = false;
+  const p = provider(async r => { if (r.options.id === 'explicit') assert.equal(warned, true); return 'ok'; });
+  const runtime = new Runtime(store, p, async () => { throw Error('explicit models must bypass Jev'); });
+  runtime.on('event', e => { if (e.type === 'model.warning') warned = true; });
+  await runtime.run();
+  assert.equal(p.calls[0].model, 'gpt-6-astra');
+  assert.equal(p.calls[1].model, defaultConfig.roles.review.model);
+});
+
+test('reported token budget stops new worker calls without weakening verification gates', async t => {
+  const { store } = await setup(t, `await agent('one',{id:'one',role:'scan'});return agent('two',{id:'two',role:'scan'});`, { tokenBudget: 10, concurrency: 1 });
+  const p = provider();
+  await assert.rejects(new Runtime(store, p).run(), /token budget reached/);
+  assert.equal(p.calls.length, 1); assert.equal(store.state.tasks.one.status, 'completed');
+  assert.equal(store.state.tasks.two.status, 'failed');
+});
+
 test('dashboard stays within terminal dimensions and strips terminal control input', () => {
   for (const [width, height] of [[40, 16], [80, 24], [110, 42]]) {
     const state = demoState(defaultConfig); state.name = '\x1b[2JInjected\x07';

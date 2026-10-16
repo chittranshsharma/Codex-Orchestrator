@@ -4,19 +4,19 @@ import { Ajv } from 'ajv';
 import type { Config, JsonSchema } from './types.js';
 
 export const defaultConfig: Config = {
-  selectionMode: 'manual', assignments: {},
+  selectionMode: 'auto', assignments: {}, fixedRoles: [], localRouting: true, tokenBudget: 100000,
   roles: {
-    plan: { model: 'gpt-6.1-sol', effort: 'high' },
-    scan: { model: 'gpt-6-luna', effort: 'high' },
-    edit: { model: 'gpt-6.1-sol', effort: 'high' },
-    verify: { model: 'gpt-6.1-sol', effort: 'high' },
-    review: { model: 'gpt-6.1-sol', effort: 'high' },
+    plan: { model: 'gpt-6-luna', effort: 'medium' },
+    scan: { model: 'gpt-6-luna', effort: 'low' },
+    edit: { model: 'gpt-6-sol', effort: 'medium' },
+    verify: { model: 'gpt-6-sol', effort: 'medium' },
+    review: { model: 'gpt-6-luna', effort: 'medium' },
   },
-  concurrency: 4, maxAgents: 100, timeoutMs: 900_000, readRetries: 1,
+  concurrency: 2, maxAgents: 16, timeoutMs: 900_000, readRetries: 0,
   maxInputChars: 120_000, maxOutputChars: 1_000_000,
-  jev: { enabled: false, model: 'jev-latest', confidence: 0.8, timeoutMs: 10_000,
-    profiles: { fast: { model: 'gpt-6-luna', effort: 'high' },
-      standard: { model: 'gpt-6.1-sol', effort: 'high' }, deep: { model: 'gpt-6.1-sol', effort: 'xhigh' } } },
+  jev: { enabled: false, shareTaskText: false, model: 'jev-latest', confidence: 0.8, timeoutMs: 10_000,
+    profiles: { fast: { model: 'gpt-6-luna', effort: 'low' },
+      standard: { model: 'gpt-6-sol', effort: 'medium' }, deep: { model: 'gpt-6-sol', effort: 'high' } } },
 };
 const profileSchema = {
   type: 'object', additionalProperties: false, required: ['model', 'effort'],
@@ -30,6 +30,9 @@ const configSchema = {
   required: ['roles', 'concurrency', 'maxAgents', 'timeoutMs', 'readRetries', 'maxInputChars', 'maxOutputChars'],
   properties: {
     selectionMode: { enum: ['manual', 'auto'] },
+    fixedRoles: { type: 'array', uniqueItems: true, items: { enum: Object.keys(defaultConfig.roles) } },
+    localRouting: { type: 'boolean' },
+    tokenBudget: { type: 'integer', minimum: 1, maximum: 100000000 },
     assignments: { type: 'object', maxProperties: 1000, propertyNames: { pattern: '^[a-zA-Z0-9_-]{1,100}$', not: { enum: ['__proto__', 'prototype', 'constructor'] } }, additionalProperties: profileSchema },
     roles: { type: 'object', additionalProperties: false, required: Object.keys(defaultConfig.roles),
       properties: Object.fromEntries(Object.keys(defaultConfig.roles).map(role => [role, profileSchema])) },
@@ -42,6 +45,7 @@ const configSchema = {
     codexPath: { type: 'string', minLength: 1 },
     jev: { type: 'object', additionalProperties: false, required: ['enabled', 'model', 'confidence', 'timeoutMs', 'profiles'], properties: {
       enabled: { type: 'boolean' }, model: { type: 'string', minLength: 1, maxLength: 120 },
+      shareTaskText: { type: 'boolean' },
       confidence: { type: 'number', minimum: 0, maximum: 1 }, timeoutMs: { type: 'integer', minimum: 100, maximum: 60_000 },
       profiles: { type: 'object', additionalProperties: false, required: ['fast', 'standard', 'deep'],
         properties: { fast: profileSchema, standard: profileSchema, deep: profileSchema } },

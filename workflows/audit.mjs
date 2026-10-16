@@ -5,7 +5,7 @@ const finding = {
   properties: { title: { type: 'string' }, file: { type: 'string' }, line: { type: 'integer', minimum: 1 },
     evidence: { type: 'string' }, severity: { enum: ['critical', 'high', 'medium', 'low'] } },
 };
-const scanSchema = { type: 'object', additionalProperties: false, required: ['findings'], properties: { findings: { type: 'array', maxItems: 20, items: finding } } };
+const scanSchema = { type: 'object', additionalProperties: false, required: ['findings'], properties: { findings: { type: 'array', maxItems: 5, items: finding } } };
 const findingCheck = { type: 'object', additionalProperties: false, required: ['confirmed', 'evidence'], properties: { confirmed: { type: 'boolean' }, evidence: { type: 'string' } } };
 const patchCheck = { type: 'object', additionalProperties: false, required: ['passed', 'evidence', 'remaining'], properties: { passed: { type: 'boolean' }, evidence: { type: 'string' }, remaining: { type: 'string' } } };
 
@@ -14,7 +14,7 @@ export default async function ({ args, agent, pipeline, phase, log, repeat, acce
   if (!Array.isArray(targets) || !targets.length || targets.length > 30 || targets.some(target => typeof target !== 'string' || !target || target.includes('..') || /^(?:[A-Za-z]:|[\\/])/.test(target))) throw new Error('Pass 1-30 repository-relative targets');
   const question = args.question ?? 'Find reproducible correctness, security, and regression bugs. Ignore style preferences.';
   phase('Scan');
-  const scans = await pipeline(targets, (target, index) => agent(`Audit ${JSON.stringify(target)}. ${question}\nReport only findings with exact repository-relative files, line numbers, and a concrete failure scenario. Return an empty list when there is no defensible finding. Limit yourself to the most important 20 findings.`,
+  const scans = await pipeline(targets, (target, index) => agent(`Audit ${JSON.stringify(target)}. ${question}\nUse targeted reads. Report only findings with exact repository-relative files, line numbers, and a concrete failure scenario. Return an empty list when there is no defensible finding. Limit yourself to the most important 5 findings.`,
     { id: `scan-${index}`, role: 'scan', label: target, schema: scanSchema }));
   const unique = new Map();
   for (const scan of scans) for (const item of scan?.findings ?? []) {
@@ -36,7 +36,7 @@ export default async function ({ args, agent, pipeline, phase, log, repeat, acce
     phase('Edit and test');
     const fixed = await pipeline(confirmed, async item => {
       let workspace, feedback = '';
-      const attempt = await repeat({ maxRounds: 5, noProgressRounds: 2 }, async round => {
+      const attempt = await repeat({ maxRounds: 2, noProgressRounds: 2 }, async round => {
         const id = `fix-${item.index}-${round}`;
         await agent(`Fix this verified finding with the smallest defensible change. Read the relevant files and tests first. Run meaningful targeted checks if available. Do not modify unrelated files or commit. Report the actual change and checks.\n${JSON.stringify(item)}\nPrevious verifier feedback: ${feedback}`,
           { id, role: 'edit', label: `${item.title} / round ${round + 1}`, ...(workspace ? { workspace } : {}) });
@@ -53,7 +53,6 @@ export default async function ({ args, agent, pipeline, phase, log, repeat, acce
     patches.push(...fixed.filter(Boolean));
   }
   phase('Review');
-  const summary = await agent(`Write one concise evidence-based audit report from these independently checked findings. Include confirmed and rejected counts, failures where known, any unfinished fixes, and remaining risks. A completed workflow is not proof the repository is bug-free. Patches are isolated and have not been applied to the main checkout.\n${JSON.stringify({ confirmed, rejected, patches, failedScans: scans.filter(item => !item).length, failedVerifiers: verified.filter(item => !item).length })}`,
-    { id: 'review', role: 'review', label: 'Consolidated report' });
+  const summary = `${confirmed.length} confirmed, ${rejected.length} rejected, ${candidates.length - verified.filter(Boolean).length} unverified; ${scans.filter(item => !item).length} scans failed. ${patches.filter(p => p.passed).length} verified isolated patches. Inspect evidence and reports; patches have not been applied. A completed run does not prove the repository is bug-free.`;
   return { summary, confirmed, rejected, patches, unverified: candidates.length - verified.filter(Boolean).length };
 }
